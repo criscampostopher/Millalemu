@@ -1,0 +1,132 @@
+/* ==========================
+   ESTILO GENERAL
+========================== */
+body {
+    font-family: 'Poppins', sans-serif;
+    margin: 0;
+    display: flex;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #e0f2f1, #a5d6a7, #81c784); /* degradado bosque */
+    color: #2c3e50;
+}
+
+a { text-decoration: none; color: inherit; }
+
+/* ==========================
+   SIDEBAR
+========================== */
+.sidebar {
+    width: 250px;
+    background: #145a20;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    padding-top: 30px;
+    box-shadow: 3px 0 10px rgba(0,0,0,0.2);
+}
+
+.sidebar h2 {
+    text-align: center;
+    font-size: 24px;
+    margin-bottom: 30px;
+    color: #dcedc1;
+}
+
+.sidebar a {
+    display: flex;
+    align-items: center;
+    padding: 15px 25px;
+    color: #dcedc1;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.sidebar a i { margin-right: 12px; }
+
+.sidebar a:hover {
+    background: #2e7d32;
+    border-left: 5px solid #a5d6a7;
+}
+
+/* ==========================
+   CONTENIDO PRINCIPAL
+========================== */
+.main {
+    flex: 1;
+    padding: 30px;
+    overflow-x: auto;
+}
+
+.main h1 {
+    font-size: 28px;
+    margin-bottom: 25px;
+    color: #145a20;
+}
+
+/* ==========================
+   TABLA ESTILIZADA
+========================== */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: rgba(255,255,255,0.95);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+
+th, td {
+    padding: 15px;
+    text-align: left;
+}
+
+th {
+    background: #2e7d32;
+    color: #fff;
+}
+
+tr {
+    transition: transform 0.2s, background 0.2s;
+}
+
+tr:hover {
+    background: #dcedc1;
+    transform: translateX(5px);
+    cursor: pointer;
+}
+
+/* ==========================
+   BOTONES
+========================== */
+.btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.btn-view {
+    background: #42a5f5;
+}
+
+.btn-view:hover {
+    background: #1e88e5;
+}
+
+.btn-del {
+    background: #ef5350;
+}
+
+.btn-del:hover {
+    background: #c62828;
+}
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+    .sidebar { width: 200px; }
+    .main { padding: 20px; }
+    table th, table td { padding: 10px; font-size: 14px; }
+}

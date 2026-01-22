@@ -1,0 +1,204 @@
+/* =========================================
+   ESTILO VISUAL - PANEL USUARIO (MILLALEMU)
+   ========================================= */
+
+/* 1. Fuentes y Base */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Poppins', sans-serif;
+    /* Fondo de bosque  */
+    background: url('https://images.unsplash.com/photo-1493599124325-e628361046af?q=80&w=2670&auto=format&fit=crop') no-repeat center center fixed;
+    background-size: cover;
+    color: #333;
+    min-height: 100vh;
+    position: relative;
+}
+
+/* Overlay oscuro para mejorar lectura */
+body::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.5); 
+    z-index: -1; /* Detrás del contenido */
+}
+
+/* 2. Animación de Hojas (Leaves) */
+.leaves-container {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: -1;
+    overflow: hidden;
+}
+
+.leaf {
+    position: absolute;
+    top: -50px;
+    width: 30px; height: 30px;
+    background-image: url('https://i.imgur.com/7Qp7uQ6.png');
+    background-size: contain;
+    background-repeat: no-repeat;
+    opacity: 0.4;
+    animation: fall linear infinite;
+}
+
+@keyframes fall {
+    0% { transform: translateY(-10%) translateX(0) rotate(0deg); opacity: 0; }
+    10% { opacity: 0.5; }
+    100% { transform: translateY(110vh) translateX(100px) rotate(360deg); opacity: 0; }
+}
+
+/* Configuración de hojas individuales */
+.leaf:nth-child(1) { left: 10%; animation-duration: 15s; }
+.leaf:nth-child(2) { left: 30%; animation-duration: 12s; animation-delay: 2s; }
+.leaf:nth-child(3) { left: 70%; animation-duration: 18s; animation-delay: 1s; }
+.leaf:nth-child(4) { left: 90%; animation-duration: 10s; animation-delay: 3s; }
+
+/* 3. Contenedor Principal */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    position: relative;
+    z-index: 1; /* Encima del fondo */
+}
+
+/* 4. Barra Superior (Header) */
+.header-bar {
+    background: rgba(255, 255, 255, 0.95); /* Blanco semi-transparente */
+    padding: 20px 30px;
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 40px;
+    backdrop-filter: blur(10px);
+    border-bottom: 4px solid #2e7d32; /* Borde verde corporativo */
+}
+
+.header-bar h2 {
+    margin: 0;
+    color: #2e7d32;
+    font-size: 1.8rem;
+    font-weight: 700;
+}
+
+.user-welcome {
+    margin-top: 5px;
+    font-size: 0.95rem;
+    color: #555;
+    font-weight: 500;
+}
+
+/* Botón Cerrar Sesión */
+.btn-logout {
+    background-color: #e74c3c;
+    color: white;
+    text-decoration: none;
+    padding: 10px 25px;
+    border-radius: 50px; /* Redondeado */
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 10px rgba(231, 76, 60, 0.3);
+}
+
+.btn-logout:hover {
+    background-color: #c0392b;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 15px rgba(231, 76, 60, 0.4);
+}
+
+/* 5. Grid de Tarjetas */
+.grid-mapas {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 30px;
+    width: 100%;
+}
+
+/* 6. Diseño de la Tarjeta */
+.map-card {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 15px;
+    padding: 25px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    border-left: 6px solid #2e7d32; 
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 200px;
+}
+
+.map-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 15px 30px rgba(0,0,0,0.3);
+}
+
+.map-title {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #2c3e50;
+    margin-bottom: 5px;
+}
+
+.map-type {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #2e7d32; 
+    font-weight: 700;
+    margin-bottom: 15px;
+    background: #e8f5e9;
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+.map-date {
+    font-size: 0.9rem;
+    color: #7f8c8d;
+    margin-bottom: 25px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Botón Ver Mapa */
+.btn-ver {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(45deg, #2e7d32, #43a047); 
+    color: white;
+    text-align: center;
+    text-decoration: none;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.3s;
+    margin-top: auto;
+    box-sizing: border-box;
+    box-shadow: 0 4px 10px rgba(46, 125, 50, 0.3);
+}
+
+.btn-ver:hover {
+    background: linear-gradient(45deg, #1b5e20, #2e7d32);
+    box-shadow: 0 6px 15px rgba(46, 125, 50, 0.4);
+}
+
+/* Mensajes */
+.error-msg { background: #fee2e2; color: #b91c1c; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+.sin-mapas { grid-column: 1 / -1; text-align: center; padding: 40px; background: white; border-radius: 12px; color: #7f8c8d; }
+
+/* Responsive */
+@media (max-width: 600px) {
+    .header-bar { flex-direction: column; text-align: center; gap: 20px; }
+    .btn-logout { width: 100%; box-sizing: border-box; }
+}

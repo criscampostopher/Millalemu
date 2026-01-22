@@ -1,0 +1,205 @@
+/* ==============================
+   BASE
+============================== */
+body {
+    font-family: 'Poppins', sans-serif;
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    color: #fff;
+
+    /* Fondo de bosque */
+    background: url('https://images.unsplash.com/photo-1493599124325-e628361046af?q=80&w=2670&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D') no-repeat center center fixed;
+    background-size: cover;
+    position: relative;
+}
+
+body::before {
+    content: "";
+    position: absolute;
+    top:0; left:0;
+    width:100%; height:100%;
+    background: rgba(0,0,0,0.4); /* Overlay oscuro para contraste */
+    z-index: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ==============================
+   ANIMACIÓN DE HOJAS
+============================== */
+.leaves-container {
+    position: fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.leaf {
+    position: absolute;
+    top: -50px;
+    width: 20px;
+    height: 20px;
+    background: url('https://i.imgur.com/7Qp7uQ6.png') no-repeat center/contain; /* Imagen de hoja */
+    opacity: 0.6;
+    animation: fall var(--i, 10s) linear infinite;
+    left: calc(var(--i) * 10%);
+}
+
+@keyframes fall {
+    0% { transform: translateY(0) rotate(0deg); opacity:0.6; }
+    50% { transform: translateY(50vh) rotate(180deg) translateX(20px); opacity:0.8; }
+    100% { transform: translateY(100vh) rotate(360deg) translateX(-20px); opacity:0.6; }
+}
+
+/* ==============================
+   SIDEBAR
+============================== */
+.sidebar {
+    width: 250px;
+    background: rgba(20, 90, 32, 0.85); 
+    color: white;
+    display: flex;
+    flex-direction: column;
+    padding-top: 20px;
+    backdrop-filter: blur(4px);
+    position: relative; 
+    z-index: 1;
+}
+
+.sidebar h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 26px;
+    color: #fdd835; 
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.5);
+}
+
+.sidebar a {
+    display: flex;
+    align-items: center;
+    padding: 15px 20px;
+    color: #d1d5db;
+    font-weight: 500;
+    transition: all 0.3s;
+    border-radius: 8px;
+    margin: 2px 10px;
+}
+
+.sidebar a i { margin-right: 10px; width: 20px; text-align: center; }
+
+.sidebar a:hover, .sidebar a.active {
+    background: #4caf50;
+    color: #fff;
+    border-left: 4px solid #fdd835;
+}
+
+/* ==============================
+   MAIN CONTENT
+============================== */
+.main {
+    flex: 1;
+    padding: 30px;
+    overflow-y: auto;
+    position: relative; 
+    z-index: 1;
+}
+
+.main h1 {
+    font-size: 28px;
+    margin-bottom: 25px;
+    color: #fdd835;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+}
+
+/* ==============================
+   DASHBOARD CARDS
+============================== */
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 25px;
+    margin-bottom: 30px;
+}
+
+.card {
+    background: rgba(56, 142, 60, 0.85);
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    text-align: center;
+    border-top: 6px solid #81c784;
+    transition: transform 0.3s, box-shadow 0.3s;
+}
+
+.card:hover {
+    transform: translateY(-6px) scale(1.02);
+    box-shadow: 0 12px 25px rgba(0,0,0,0.35);
+}
+
+.card h3 {
+    font-size: 16px;
+    color: #e8f5e9;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.card .number {
+    font-size: 36px;
+    font-weight: 700;
+    color: #fdd835;
+    margin: 0;
+}
+
+/* ==============================
+   TABLA DE REPORTES
+============================== */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    transition: transform 0.2s;
+}
+
+table:hover { transform: scale(1.01); }
+
+th, td {
+    padding: 15px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+    color: #1b3a2a;
+}
+
+th {
+    background: #4caf50;
+    color: white;
+    text-transform: uppercase;
+}
+
+tr:hover { background: #e8f5e9; }
+
+.btn-del {
+    background: #e53935;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s, transform 0.2s;
+}
+
+.btn-del:hover {
+    background: #c62828;
+    transform: scale(1.05);
+}
+
+/* RESPONSIVE */
+@media (max-width:768px){ .cards{grid-template-columns:1fr;} }
