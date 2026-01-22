@@ -28,11 +28,11 @@ try {
             $sql = "SELECT p.id, p.nombre, p.descripcion, p.tipo, p.nivel, p.id_mapa, p.radio_metros,
                     ST_AsGeoJSON(p.geom) AS geojson,
                     CASE 
-                        -- Iconos de Google Maps
-                        WHEN LOWER(p.nivel) = 'critico' THEN 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
-                        WHEN LOWER(p.nivel) = 'alto'    THEN 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png'
-                        WHEN LOWER(p.nivel) = 'medio'   THEN 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
-                        ELSE 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+                        -- Iconos OpenSource
+                        WHEN LOWER(p.nivel) = 'critico' THEN 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png'
+                        WHEN LOWER(p.nivel) = 'alto'    THEN 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png'
+                        WHEN LOWER(p.nivel) = 'medio'   THEN 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png'
+                        ELSE 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png'
                     END as icono_url
                     FROM public.peligro p
                     WHERE p.estado = 'activa'";

@@ -124,7 +124,7 @@ if ($es_admin) {
             
             <label style="font-size:0.85em; font-weight:bold; color:#7f8c8d;">Nivel de Riesgo:</label>
             <select id="popupIcon">
-                <option value="Critico">🔴 Crítico (Rojo)</option>
+                <option value="Critico">🔴 Crítico (ROjoooo)</option>
                 <option value="Alto">🟠 Alto (Naranja)</option>
                 <option value="Medio">🟢 Medio (Verde)</option>
             </select>
@@ -142,9 +142,7 @@ if ($es_admin) {
     <audio id="alertaAudio" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant/dist/Leaflet.GoogleMutant.js"></script>
-    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCNItxLmFnVNIoe5c8fLR7A1QQsNGlf-Ng&callback=initMap"></script>
-
+    
     <script>
         // Variables globales necesarias para script_visor.js
         const LISTA_MAPAS = <?php echo json_encode($lista_mapas_visualizar); ?>;

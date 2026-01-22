@@ -140,8 +140,20 @@ function initMap() {
     map = L.map('map', { zoomControl: false }).setView([-35.4, -72.0], 9);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    const satelite = L.gridLayer.googleMutant({ type: 'hybrid', maxZoom: 22 }).addTo(map);
-    const calles = L.gridLayer.googleMutant({ type: 'roadmap', maxZoom: 22 });
+    // --- CAMBIO: Capas OpenSource ---
+    
+    // 1. Capa Satélite (Usamos Esri World Imagery, es gratis)
+    const satelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+        maxZoom: 19
+    }).addTo(map);
+
+    // 2. Capa Mapa/Calles (Usamos OpenStreetMap estándar)
+    const calles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19
+    });
+
     const layerManuales = L.layerGroup().addTo(map); 
     const layerFondo = L.featureGroup().addTo(map);
     L.control.layers({ "Satélite": satelite, "Mapa": calles }, { "Reportes": layerManuales, "Capa de Fondo": layerFondo }).addTo(map);
@@ -199,7 +211,7 @@ function initMap() {
                         
                         if (geom.type === 'Point') {
                             const m = L.marker([geom.coordinates[1], geom.coordinates[0]], { 
-                                icon: L.icon({ iconUrl: props.icono_url, iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -32] }) 
+                                icon: L.icon({ iconUrl: props.icono_url, iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] }) 
                             });
                             
                             m.radio_custom = parseFloat(props.radio_metros) || 0;
