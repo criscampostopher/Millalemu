@@ -72,3 +72,155 @@ body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
 .dot-orange { background: #fd7e14; } 
 .dot-green { background: #28a745; }
 .poly-zone { width: 15px; height: 15px; background: rgba(224,169,224,0.6); border: 2px solid #800080; display: inline-block; margin-right: 8px; vertical-align: middle;}
+
+
+
+/* --- NUEVOS ESTILOS PARA MENÚ DE ZONAS --- */
+
+#layers-container {
+    max-height: 40vh; /* Para que no ocupe toda la pantalla si hay muchas zonas */
+    overflow-y: auto;
+    border-top: 1px solid #eee;
+    padding-top: 10px;
+}
+
+.zone-group {
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    background: white;
+    overflow: hidden;
+}
+
+.zone-header {
+    background: #f8f9fa;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    color: #2c3e50;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+}
+
+.zone-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-download {
+    background: none;
+    border: none;
+    color: #3498db;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: 0.2s;
+}
+
+.btn-download:hover {
+    background: #eaf2f8;
+    color: #2980b9;
+}
+
+.offline-badge {
+    font-size: 0.7rem;
+    font-weight: bold;
+}
+
+.zone-layers {
+    padding: 5px 0;
+}
+
+.layer-item {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.layer-item:hover {
+    background: #fbfbfb;
+}
+
+.badge-cat {
+    background: #ecf0f1;
+    color: #7f8c8d;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 10px;
+    margin-left: 8px;
+}
+
+/* Scrollbar bonito para el contenedor */
+#layers-container::-webkit-scrollbar { width: 6px; }
+#layers-container::-webkit-scrollbar-thumb { background: #bdc3c7; border-radius: 3px; }
+
+
+/* ==========================================================
+   MEJORAS VISUALES: Acordeón y Scrollbar
+   ========================================================== */
+
+/* 1. Contenedor con Scrollbar elegante */
+#layers-container {
+    max-height: 50vh; /* Ocupa máximo la mitad de la pantalla */
+    overflow-y: auto; /* Scroll automático si se pasa */
+    border-top: 1px solid #eee;
+    padding-right: 5px; /* Espacio para el scroll */
+}
+
+/* Diseño del Scrollbar (Estilo Chrome/Safari/Edge) */
+#layers-container::-webkit-scrollbar { width: 6px; }
+#layers-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 3px; }
+#layers-container::-webkit-scrollbar-thumb { background: #bdc3c7; border-radius: 3px; }
+#layers-container::-webkit-scrollbar-thumb:hover { background: #95a5a6; }
+
+/* 2. Cabecera de Zona (Ahora es clickable) */
+.zone-header {
+    background: #f8f9fa;
+    padding: 10px 12px;
+    font-size: 0.95rem;
+    color: #2c3e50;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    cursor: pointer; /* Manito al pasar el mouse */
+    transition: background 0.2s;
+    user-select: none; /* Evita que se seleccione el texto al hacer clic rápido */
+}
+
+.zone-header:hover {
+    background: #e9ecef; /* Efecto hover */
+}
+
+/* Icono de la flecha */
+.zone-chevron {
+    margin-right: 8px;
+    font-size: 0.8rem;
+    color: #7f8c8d;
+    transition: transform 0.3s ease;
+}
+
+/* Clase para rotar la flecha cuando está abierto */
+.zone-header.active .zone-chevron {
+    transform: rotate(90deg);
+}
+
+/* 3. Contenedor de Capas (Oculto por defecto) */
+.zone-layers {
+    padding: 5px 0;
+    display: none; /* CERRADO POR DEFECTO */
+    background: #fff;
+    border-bottom: 2px solid #f1f2f6;
+    animation: slideDown 0.3s ease-out;
+}
+
+/* Animación suave de apertura */
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}

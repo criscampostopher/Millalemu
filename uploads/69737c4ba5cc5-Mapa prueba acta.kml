@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>Acta.shp</name>
+	<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.6.10441"></atom:link>
+	<Schema name="Acta" id="S_Acta_SSSSSSSSSSSSSSDSSSSSSSSSSDSSDD">
+		<SimpleField type="long" name="OBJECTID"><displayName>&lt;b&gt;OBJECTID&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="NUMESCENAR"><displayName>&lt;b&gt;NUMESCENAR&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="TIPOUSO"><displayName>&lt;b&gt;TIPOUSO&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="TIPO_USO"><displayName>&lt;b&gt;TIPO_USO&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="NOM_TIPUSO"><displayName>&lt;b&gt;NOM_TIPUSO&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="APL"><displayName>&lt;b&gt;APL&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="TEMPORADA"><displayName>&lt;b&gt;TEMPORADA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="NUM_ACTA"><displayName>&lt;b&gt;NUM_ACTA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="ZONA"><displayName>&lt;b&gt;ZONA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="ID_AREA"><displayName>&lt;b&gt;ID_AREA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="NOM_AREA"><displayName>&lt;b&gt;NOM_AREA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="INTERVENCI"><displayName>&lt;b&gt;INTERVENCI&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="CODIGO"><displayName>&lt;b&gt;CODIGO&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="NOM_PREDIO"><displayName>&lt;b&gt;NOM_PREDIO&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="UNIDAD"><displayName>&lt;b&gt;UNIDAD&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="double" name="CS_EMSEFOR"><displayName>&lt;b&gt;CS_EMSEFOR&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="ID_EMSEFOR"><displayName>&lt;b&gt;ID_EMSEFOR&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="EMSEFOR"><displayName>&lt;b&gt;EMSEFOR&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="FAENA"><displayName>&lt;b&gt;FAENA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="SUPERVISOR"><displayName>&lt;b&gt;SUPERVISOR&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="ID_RESPON"><displayName>&lt;b&gt;ID_RESPON&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="NOM_RESPON"><displayName>&lt;b&gt;NOM_RESPON&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="EQUIPO_MAD"><displayName>&lt;b&gt;EQUIPO_MAD&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="FCH_LIBERA"><displayName>&lt;b&gt;FCH_LIBERA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="FCH_CIERRE"><displayName>&lt;b&gt;FCH_CIERRE&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="EST_MADERA"><displayName>&lt;b&gt;EST_MADERA&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="double" name="SUPERFICIE"><displayName>&lt;b&gt;SUPERFICIE&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="long" name="ESTADO"><displayName>&lt;b&gt;ESTADO&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="ID_TRA_INI"><displayName>&lt;b&gt;ID_TRA_INI&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="string" name="ID_TRA_FIN"><displayName>&lt;b&gt;ID_TRA_FIN&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="double" name="Shape_Leng"><displayName>&lt;b&gt;Shape_Leng&lt;/b&gt;</displayName>
+</SimpleField>
+		<SimpleField type="double" name="Shape_Area"><displayName>&lt;b&gt;Shape_Area&lt;/b&gt;</displayName>
+</SimpleField>
+	</Schema>
+	<Style id="falseColor">
+		<BalloonStyle>
+			<text><![CDATA[<table border="0">
+  <tr><td><b>OBJECTID</b></td><td>$[Acta/OBJECTID]</td></tr>
+  <tr><td><b>NUMESCENAR</b></td><td>$[Acta/NUMESCENAR]</td></tr>
+  <tr><td><b>TIPOUSO</b></td><td>$[Acta/TIPOUSO]</td></tr>
+  <tr><td><b>TIPO_USO</b></td><td>$[Acta/TIPO_USO]</td></tr>
+  <tr><td><b>NOM_TIPUSO</b></td><td>$[Acta/NOM_TIPUSO]</td></tr>
+  <tr><td><b>APL</b></td><td>$[Acta/APL]</td></tr>
+  <tr><td><b>TEMPORADA</b></td><td>$[Acta/TEMPORADA]</td></tr>
+  <tr><td><b>NUM_ACTA</b></td><td>$[Acta/NUM_ACTA]</td></tr>
+  <tr><td><b>ZONA</b></td><td>$[Acta/ZONA]</td></tr>
+  <tr><td><b>ID_AREA</b></td><td>$[Acta/ID_AREA]</td></tr>
+  <tr><td><b>NOM_AREA</b></td><td>$[Acta/NOM_AREA]</td></tr>
+  <tr><td><b>INTERVENCI</b></td><td>$[Acta/INTERVENCI]</td></tr>
+  <tr><td><b>CODIGO</b></td><td>$[Acta/CODIGO]</td></tr>
+  <tr><td><b>NOM_PREDIO</b></td><td>$[Acta/NOM_PREDIO]</td></tr>
+  <tr><td><b>UNIDAD</b></td><td>$[Acta/UNIDAD]</td></tr>
+  <tr><td><b>CS_EMSEFOR</b></td><td>$[Acta/CS_EMSEFOR]</td></tr>
+  <tr><td><b>ID_EMSEFOR</b></td><td>$[Acta/ID_EMSEFOR]</td></tr>
+  <tr><td><b>EMSEFOR</b></td><td>$[Acta/EMSEFOR]</td></tr>
+  <tr><td><b>FAENA</b></td><td>$[Acta/FAENA]</td></tr>
+  <tr><td><b>SUPERVISOR</b></td><td>$[Acta/SUPERVISOR]</td></tr>
+  <tr><td><b>ID_RESPON</b></td><td>$[Acta/ID_RESPON]</td></tr>
+  <tr><td><b>NOM_RESPON</b></td><td>$[Acta/NOM_RESPON]</td></tr>
+  <tr><td><b>EQUIPO_MAD</b></td><td>$[Acta/EQUIPO_MAD]</td></tr>
+  <tr><td><b>FCH_LIBERA</b></td><td>$[Acta/FCH_LIBERA]</td></tr>
+  <tr><td><b>FCH_CIERRE</b></td><td>$[Acta/FCH_CIERRE]</td></tr>
+  <tr><td><b>EST_MADERA</b></td><td>$[Acta/EST_MADERA]</td></tr>
+  <tr><td><b>SUPERFICIE</b></td><td>$[Acta/SUPERFICIE]</td></tr>
+  <tr><td><b>ESTADO</b></td><td>$[Acta/ESTADO]</td></tr>
+  <tr><td><b>ID_TRA_INI</b></td><td>$[Acta/ID_TRA_INI]</td></tr>
+  <tr><td><b>ID_TRA_FIN</b></td><td>$[Acta/ID_TRA_FIN]</td></tr>
+  <tr><td><b>Shape_Leng</b></td><td>$[Acta/Shape_Leng]</td></tr>
+  <tr><td><b>Shape_Area</b></td><td>$[Acta/Shape_Area]</td></tr>
+</table>
+]]></text>
+		</BalloonStyle>
+		<PolyStyle>
+			<colorMode>random</colorMode>
+		</PolyStyle>
+	</Style>
+	<Folder id="layer 0">
+		<name>Acta</name>
+		<Placemark>
+			<styleUrl>#falseColor</styleUrl>
+			<ExtendedData>
+				<SchemaData schemaUrl="#S_Acta_SSSSSSSSSSSSSSDSSSSSSSSSSDSSDD">
+					<SimpleData name="OBJECTID">686861</SimpleData>
+					<SimpleData name="NUMESCENAR">202</SimpleData>
+					<SimpleData name="TIPOUSO">EUGL</SimpleData>
+					<SimpleData name="TIPO_USO">041</SimpleData>
+					<SimpleData name="NOM_TIPUSO">EUCALIPTUS GLOBULUS</SimpleData>
+					<SimpleData name="APL">2011</SimpleData>
+					<SimpleData name="TEMPORADA">VE2025</SimpleData>
+					<SimpleData name="NUM_ACTA">2072148</SimpleData>
+					<SimpleData name="ZONA">Constitucion</SimpleData>
+					<SimpleData name="ID_AREA">05</SimpleData>
+					<SimpleData name="NOM_AREA">Valle de Cauquenes</SimpleData>
+					<SimpleData name="INTERVENCI">COSECHA</SimpleData>
+					<SimpleData name="CODIGO">10728</SimpleData>
+					<SimpleData name="NOM_PREDIO">CHAMIZAL</SimpleData>
+					<SimpleData name="UNIDAD">COSECHA</SimpleData>
+					<SimpleData name="CS_EMSEFOR">3283</SimpleData>
+					<SimpleData name="ID_EMSEFOR"></SimpleData>
+					<SimpleData name="EMSEFOR">FORESTAL MILLALEMU Y CIA.LTDA.</SimpleData>
+					<SimpleData name="FAENA">Sk.Grapple</SimpleData>
+					<SimpleData name="SUPERVISOR">DIEGO GOMEZ MANZO</SimpleData>
+					<SimpleData name="ID_RESPON"></SimpleData>
+					<SimpleData name="NOM_RESPON"></SimpleData>
+					<SimpleData name="EQUIPO_MAD">SKGR</SimpleData>
+					<SimpleData name="FCH_LIBERA">2025/11/07</SimpleData>
+					<SimpleData name="FCH_CIERRE"></SimpleData>
+					<SimpleData name="EST_MADERA">Verde</SimpleData>
+					<SimpleData name="SUPERFICIE">3.60132</SimpleData>
+					<SimpleData name="ESTADO">3</SimpleData>
+					<SimpleData name="ID_TRA_INI"></SimpleData>
+					<SimpleData name="ID_TRA_FIN"></SimpleData>
+					<SimpleData name="Shape_Leng">0</SimpleData>
+					<SimpleData name="Shape_Area">0</SimpleData>
+				</SchemaData>
+			</ExtendedData>
+			<Polygon>
+				<outerBoundaryIs>
+					<LinearRing>
+						<coordinates>
+							-72.59186917699689,-36.03106683999989,0 -72.59191139599685,-36.03103435499992,0 -72.59193257699691,-36.03102148099993,0 -72.5919541739969,-36.03101061799993,0 -72.59198701599688,-36.03099702999993,0 -72.59202705699687,-36.03098282799987,0 -72.59208052999689,-36.03096580699992,0 -72.59212368299687,-36.03095427899991,0 -72.59216302699691,-36.03094650799991,0 -72.59219936999688,-36.03094240599989,0 -72.59223805699691,-36.03094116199994,0 -72.59227635999689,-36.0309424979999,0 -72.59231314399686,-36.03094637199993,0 -72.59234762499685,-36.0309526989999,0 -72.59237655899689,-36.03096020099994,0 -72.59240448199687,-36.0309693139999,0 -72.59243063999689,-36.0309797909999,0 -72.5924544999969,-36.03099141499992,0 -72.5924799409969,-36.03100913299989,0 -72.59253525799687,-36.03106405599988,0 -72.59254983999688,-36.03107594199994,0 -72.59256420299685,-36.03108504199992,0 -72.59259789999692,-36.03110102299994,0 -72.59263536099689,-36.03111448899992,0 -72.59267524399691,-36.0311249549999,0 -72.59271584799689,-36.03113197099992,0 -72.59277543399691,-36.03113720499988,0 -72.5927986869969,-36.03113666999991,0 -72.59281933299687,-36.03113404899992,0 -72.5928435959969,-36.0311278229999,0 -72.59287388299691,-36.03111686099987,0 -72.5929097789969,-36.03110050899988,0 -72.59294286699692,-36.03108082899993,0 -72.59297314299687,-36.0310578159999,0 -72.59300060699691,-36.03103147299992,0 -72.59301964199686,-36.03108468799993,0 -72.59306345799691,-36.03120718199989,0 -72.59316810899692,-36.03149974299992,0 -72.59321724299693,-36.03161982599988,0 -72.59335522899687,-36.0320871479999,0 -72.59338482399689,-36.03221153099992,0 -72.59340100499692,-36.03227953199991,0 -72.5934040059969,-36.03229214199991,0 -72.59340587099689,-36.03229998199992,0 -72.5934239529969,-36.03237597699989,0 -72.5933411209969,-36.03243661199991,0 -72.59331590999689,-36.03234382099996,0 -72.59307479799689,-36.03232009099991,0 -72.59262803799692,-36.03243003899991,0 -72.59262025199689,-36.03248411699991,0 -72.59254007299688,-36.0324623029999,0 -72.59253747099687,-36.03246164299993,0 -72.59253520199688,-36.0324611089999,0 -72.59253240799687,-36.03246050299993,0 -72.59239924199687,-36.03243417499991,0 -72.5923976859969,-36.03243388299989,0 -72.59239601099691,-36.03243359099991,0 -72.59239349299691,-36.03243321599989,0 -72.59239104399687,-36.03243289699995,0 -72.59229297899689,-36.03242152199991,0 -72.59228909599685,-36.0324211649999,0 -72.59228650099685,-36.03242098999988,0 -72.59228261999687,-36.03242081999995,0 -72.5922794439969,-36.03242081499993,0 -72.59227616999688,-36.03242089599991,0 -72.59216591599687,-36.03242574399992,0 -72.59216212299691,-36.03242599599992,0 -72.5921583879969,-36.03242636999989,0 -72.59215268099689,-36.03242727899988,0 -72.59215018199686,-36.03242776899992,0 -72.59214461199693,-36.03242907299989,0 -72.59213920599686,-36.03243076599989,0 -72.59213745399688,-36.03243138699992,0 -72.59213222599686,-36.03243346399992,0 -72.59212724599689,-36.03243590399992,0 -72.59212535199691,-36.03243692599992,0 -72.59212066599687,-36.03243969899989,0 -72.59211733799691,-36.0324420059999,0 -72.59211569499689,-36.03244322199996,0 -72.59211250199688,-36.03244574999992,0 -72.59205081799689,-36.0324979749999,0 -72.59204893399684,-36.03249963799988,0 -72.59204767199689,-36.03250083499989,0 -72.59204590199685,-36.03250256399994,0 -72.59204035199689,-36.03250884899992,0 -72.59203949899685,-36.03250997799989,0 -72.5920351639969,-36.03251676299988,0 -72.5920340669969,-36.03251882499993,0 -72.5920332019969,-36.0325205309999,0 -72.59203234499687,-36.03252240599988,0 -72.59201661799686,-36.03255888899994,0 -72.59199689299692,-36.0325470729999,0 -72.59196084999688,-36.03252548499992,0 -72.59192480699686,-36.03250389199991,0 -72.5918926129969,-36.03247641799987,0 -72.5918641779969,-36.03244603699988,0 -72.59182052599685,-36.03243323099993,0 -72.59172873799686,-36.03243437099991,0 -72.59168418199688,-36.03245135999992,0 -72.59163649999687,-36.0324503999999,0 -72.5915966989969,-36.03243171799991,0 -72.59154919799688,-36.03242480099988,0 -72.59150151499686,-36.0324238429999,0 -72.59145374399689,-36.03242586299993,0 -72.59141633999688,-36.0324489589999,0 -72.5913825129969,-36.03247510999989,0 -72.59135950799688,-36.0325074369999,0 -72.59135465899685,-36.03254608999996,0 -72.59135347899687,-36.03258482399995,0 -72.5913522999969,-36.03262354899988,0 -72.59134020799688,-36.0326590819999,0 -72.59131362399687,-36.0326883559999,0 -72.59130153299689,-36.03272388699992,0 -72.59129310799685,-36.03275948999988,0 -72.59128825999683,-36.03279814399993,0 -72.59128341199686,-36.03283680099992,0 -72.59129699499684,-36.0328728419999,0 -72.5913214899969,-36.03291209099991,0 -72.5913461669969,-36.03294537699995,0 -72.59136362699687,-36.03296674099987,0 -72.5913164269969,-36.0329385479999,0 -72.59131419299686,-36.03293698699991,0 -72.59122755099689,-36.03286721699988,0 -72.59118807299683,-36.03280773299991,0 -72.59115145799686,-36.03257648999992,0 -72.59110655399688,-36.0324381709999,0 -72.5911028969969,-36.03243277899992,0 -72.5912638589969,-36.03229061599991,0 -72.5911334439969,-36.03209295199992,0 -72.59103291999686,-36.03198897599995,0 -72.59084626699688,-36.0320251189999,0 -72.59076044399687,-36.03207109599993,0 -72.59074357799688,-36.03208013199992,0 -72.59071697799689,-36.03203061399991,0 -72.59071535799686,-36.03202759699991,0 -72.59071433999691,-36.03202579999988,0 -72.59071326699687,-36.03202399599993,0 -72.59056797699688,-36.0317897739999,0 -72.59056698599686,-36.0317882359999,0 -72.59056056799686,-36.03178038499988,0 -72.59055256899687,-36.03177355799989,0 -72.59054878799689,-36.03177129199992,0 -72.59053692099687,-36.03172221099988,0 -72.59053603099684,-36.03171257799992,0 -72.59059955999689,-36.0316968109999,0 -72.59069118199687,-36.03168005099995,0 -72.59075668199685,-36.03167241799991,0 -72.59090954999684,-36.03166337999988,0 -72.59094687999685,-36.03165894099988,0 -72.59098014799687,-36.03165294799987,0 -72.59106384499685,-36.03163168999993,0 -72.59114368599685,-36.0316050379999,0 -72.59117630599688,-36.03159163899988,0 -72.59120929199689,-36.03157594599995,0 -72.59127796399687,-36.03153686499991,0 -72.59134287899687,-36.03149349299992,0 -72.59148332299688,-36.03139244799991,0 -72.59160060999686,-36.03130853699992,0 -72.5917090279969,-36.0312251089999,0 -72.59175149999692,-36.03118692399991,0 -72.59183274299686,-36.03110156199988,0 -72.59186917699689,-36.03106683999989,0 
+						</coordinates>
+					</LinearRing>
+				</outerBoundaryIs>
+			</Polygon>
+		</Placemark>
+	</Folder>
+</Document>
+</kml>
