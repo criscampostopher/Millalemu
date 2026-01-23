@@ -123,7 +123,10 @@ function initMap() {
     L.control.layers({ "Satélite": satelite, "Mapa": calles }, { "Reportes": layerManuales, "Capa de Fondo": layerFondo }).addTo(map);
 
     // Cargar GeoJSONs
+    // Cargar Mapas (Soporte GeoJSON y KML)
     if (typeof LISTA_MAPAS !== 'undefined' && LISTA_MAPAS.length > 0) {
+        
+        // (Código del selector "Admin" se mantiene igual...)
         if(IS_ADMIN) {
             const sel = document.getElementById('selectorMapaForm');
             if(sel) {
@@ -139,20 +142,48 @@ function initMap() {
                 });
             }
         }
+
+        // --- LÓGICA DE CARGA ACTUALIZADA ---
         LISTA_MAPAS.forEach(datosMapa => {
             if(!datosMapa.ruta_archivo) return;
-            fetch(datosMapa.ruta_archivo).then(r => r.json()).then(data => {
-                const capa = L.geoJSON(data, {
-                    style: feature => {
-                        if (feature.geometry.type.includes('Polygon')) return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
-                        return { color: '#FF0000', weight: 1 };
-                    },
-                    pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 5, fillColor: "#FF0000", color: "#fff", weight: 1, fillOpacity: 1 }),
-                    onEachFeature: (f, l) => { l.bindPopup("<b>Mapa:</b> " + datosMapa.nombre_mapa); }
+            
+            // Definir el estilo visual (El mismo para KML y GeoJSON)
+            const estiloComun = {
+                style: feature => {
+                    // Mantener tu lógica visual: Polígonos rosas, Líneas rojas
+                    if (feature.geometry.type.includes('Polygon')) {
+                        return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
+                    }
+                    return { color: '#FF0000', weight: 1 };
+                },
+                pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 5, fillColor: "#FF0000", color: "#fff", weight: 1, fillOpacity: 1 }),
+                onEachFeature: (f, l) => { l.bindPopup("<b>Mapa:</b> " + datosMapa.nombre_mapa); }
+            };
+
+            // Detectar extensión del archivo
+            const esKML = datosMapa.ruta_archivo.toLowerCase().endsWith('.kml');
+
+            if (esKML) {
+                // Usar Omnivore para KML
+                const kmlLayer = omnivore.kml(datosMapa.ruta_archivo, null, L.geoJSON(null, estiloComun));
+                
+                kmlLayer.on('ready', function() {
+                    layerFondo.addLayer(this);
+                    if(typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL == datosMapa.id_mapa) {
+                        map.fitBounds(this.getBounds());
+                    }
                 });
-                layerFondo.addLayer(capa);
-                if(typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL == datosMapa.id_mapa) map.fitBounds(capa.getBounds());
-            }).catch(e => console.error(e));
+
+            } else {
+                // Usar fetch estándar para GeoJSON (Legacy)
+                fetch(datosMapa.ruta_archivo).then(r => r.json()).then(data => {
+                    const capa = L.geoJSON(data, estiloComun);
+                    layerFondo.addLayer(capa);
+                    if(typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL == datosMapa.id_mapa) {
+                        map.fitBounds(capa.getBounds());
+                    }
+                }).catch(e => console.error("Error cargando GeoJSON", e));
+            }
         });
     }
 

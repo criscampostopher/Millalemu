@@ -80,11 +80,11 @@ if ($es_admin) {
             <form action="Api/api_subirMapa.php" method="post" enctype="multipart/form-data" id="uploadForm">
                 <label class="file-upload">
                     <label for="file-upload" class="custom-file-upload">
-                        <i class="fas fa-cloud-upload-alt"></i> Subir Mapa (GeoJSON)
+                     <i class="fas fa-cloud-upload-alt"></i> Subir Mapa (KML/KMZ/GeoJSON)
+                     </label>
+                     <input id="file-upload" type="file" name="mapa" accept=".geojson, .kml, .kmz" required 
+                         onchange="document.getElementById('uploadForm').submit(); document.getElementById('loader').style.display='block';"/>
                     </label>
-                    <input id="file-upload" type="file" name="mapa" accept=".geojson" required 
-                           onchange="document.getElementById('uploadForm').submit(); document.getElementById('loader').style.display='block';"/>
-                </label>
             </form>
             
             <?php if(!empty($mensaje)) echo "<div style='font-size:0.8em; padding:8px; margin-bottom:10px; border-radius:4px; background:".($tipo_msg=='success'?'#d4edda':'#f8d7da')."; color:".($tipo_msg=='success'?'#155724':'#721c24').";'>$mensaje</div>"; ?>
@@ -142,6 +142,7 @@ if ($es_admin) {
     <audio id="alertaAudio" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg"></audio>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src='https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js'></script>
     
     <script>
         // Variables globales necesarias para script_visor.js
