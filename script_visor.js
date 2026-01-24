@@ -1,8 +1,8 @@
 /* ==========================================================
-  Lógica del Visor: Mapas, GPS, Alertas (Estilo Naranja) y Offline (v4.1)
+  Lógica del Visor: Mapas, GPS, Alertas y Colores KML (v7 Final)
    ========================================================== */
 
-let map, userMarker, watchId;
+let map, userMarker, accuracyCircle, watchId;
 let layerFondo, layerManuales;
 let marcadoresPeligro = []; 
 let capasActivas = {}; 
@@ -15,8 +15,15 @@ function initMap() {
     map = L.map('map', { zoomControl: false }).setView([-35.4, -72.0], 9);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    const satelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Tiles &copy; Esri', maxZoom: 19 }).addTo(map);
-    const calles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 19 });
+    const satelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
+        attribution: 'Tiles &copy; Esri', 
+        maxZoom: 19 
+    }).addTo(map);
+    
+    const calles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+        attribution: '&copy; OpenStreetMap', 
+        maxZoom: 19 
+    });
 
     layerFondo = L.featureGroup().addTo(map);    
     layerManuales = L.layerGroup().addTo(map);   
@@ -36,7 +43,7 @@ function initMap() {
     setInterval(() => { if(ultimaPosicion) checkPeligros(ultimaPosicion[0], ultimaPosicion[1]); }, 1000); 
 }
 
-// --- 2. RENDERIZADOR DE MENÚ (Sin cambios) ---
+// --- 2. RENDERIZADOR DE MENÚ ---
 function renderizarMenuCapas() {
     const container = document.getElementById('layers-container');
     if(!container) return;
@@ -104,6 +111,7 @@ function renderizarMenuCapas() {
         container.appendChild(divZona);
     });
 }
+
 window.toggleZona = function(idZona) {
     const layersDiv = document.getElementById(`layers-zone-${idZona}`);
     const chevron = document.getElementById(`chevron-${idZona}`);
@@ -115,17 +123,23 @@ window.toggleZona = function(idZona) {
     }
 };
 
-// --- 3. GESTIÓN VISUAL (Sin cambios) ---
+// --- 3. GESTIÓN VISUAL Y COLORES KML (CORREGIDO) ---
+
 function gestionarCapa(input, mapaDatos, groupName) {
     if (input.checked) {
         if (input.type === 'radio') {
-            document.querySelectorAll(`input[name="${groupName}"]`).forEach(sibling => { if (sibling !== input && sibling.value) removerCapaVisual(sibling.value); });
+            document.querySelectorAll(`input[name="${groupName}"]`).forEach(sibling => { 
+                if (sibling !== input && sibling.value) {
+                    removerCapaVisual(sibling.value); 
+                }
+            });
         }
         cargarCapaVisual(mapaDatos);
     } else {
         removerCapaVisual(mapaDatos.id_mapa);
     }
 }
+
 function cargarCapaVisual(mapaDatos) {
     const id = mapaDatos.id_mapa;
     if (capasActivas[id]) return; 
@@ -135,30 +149,108 @@ function cargarCapaVisual(mapaDatos) {
         actualizarAlertasVisibles();
         return; 
     }
+
     const ruta = mapaDatos.ruta_archivo;
-    // ESTILO PARA MAPAS NORMALES (Polígonos rosa, líneas rojas)
-    const estiloMapaNormal = {
-        style: feature => {
-            if (feature.geometry.type.includes('Polygon')) return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
-            return { color: '#FF0000', weight: 2 };
-        },
-        pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 5, fillColor: "#FF0000", color: "#fff", weight: 1, fillOpacity: 1 }),
-        onEachFeature: (f, l) => { l.bindPopup("<b>" + mapaDatos.categoria + ":</b> " + mapaDatos.nombre_mapa); }
-    };
+    
+    // --- LÓGICA KML (EXTRAER COLORES) ---
     if (ruta.toLowerCase().endsWith('.kml')) {
-        const layer = omnivore.kml(ruta, null, L.geoJSON(null, estiloMapaNormal));
-        layer.on('ready', function() { layerFondo.addLayer(this); if(!ultimaPosicion) map.fitBounds(this.getBounds()); });
-        capasActivas[id] = layer;
+        fetch(ruta)
+            .then(res => res.text())
+            .then(kmlText => {
+                // 1. DICCIONARIO DE ESTILOS MANUAL (Regex)
+                const styles = {};
+                const regexStyle = /<Style[\s\S]*?id=["']([^"']+)["'][\s\S]*?<color>([0-9A-Fa-f]{8})<\/color>/gi;
+                let match;
+                
+                while ((match = regexStyle.exec(kmlText)) !== null) {
+                    const styleId = match[1];     
+                    const kmlColor = match[2];    
+                    
+                    let hex = '#FF5722';
+                    if (kmlColor.length === 8) {
+                        const bb = kmlColor.substr(2, 2);
+                        const gg = kmlColor.substr(4, 2);
+                        const rr = kmlColor.substr(6, 2);
+                        hex = `#${rr}${gg}${bb}`;
+                    }
+                    styles['#' + styleId] = hex;
+                    styles[styleId] = hex;
+                }
+
+                // 2. PARSEAR KML
+                // NOTA: 'omnivore.kml.parse' es síncrono. Devuelve el layer listo.
+                const layer = omnivore.kml.parse(kmlText, null, L.geoJSON(null, {
+                    style: feature => {
+                        const cat = (mapaDatos.categoria || '').trim().toLowerCase();
+                        
+                        // SI ES PENDIENTE: Usar colores originales + Transparencia
+                        if (cat === 'pendiente') {
+                            let colorFinal = '#FF5722'; 
+
+                            if (feature.properties.styleUrl && styles[feature.properties.styleUrl]) {
+                                colorFinal = styles[feature.properties.styleUrl];
+                            }
+                            else if (feature.properties.fill) {
+                                let c = feature.properties.fill;
+                                if (c.length === 8 && !c.startsWith('#')) {
+                                     const bb = c.substr(2, 2);
+                                     const gg = c.substr(4, 2);
+                                     const rr = c.substr(6, 2);
+                                     colorFinal = `#${rr}${gg}${bb}`;
+                                } else {
+                                    colorFinal = c;
+                                }
+                            }
+                            return { fillColor: colorFinal, color: colorFinal, weight: 1, fillOpacity: 0.5 };
+                        }
+                        
+                        // OTROS MAPAS (Morado)
+                        if (feature.geometry.type.includes('Polygon')) {
+                            return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
+                        }
+                        return { color: '#FF0000', weight: 2 };
+                    },
+                    onEachFeature: (f, l) => {
+                        let contenido = "<b>" + mapaDatos.categoria + ":</b> " + mapaDatos.nombre_mapa;
+                        if(f.properties.description) contenido += "<br>" + f.properties.description;
+                        l.bindPopup(contenido);
+                    }
+                }));
+
+                // 3. AGREGAR AL MAPA (SIN ESPERAR EVENTO 'READY')
+                layerFondo.addLayer(layer); 
+                if(!ultimaPosicion) map.fitBounds(layer.getBounds()); 
+                
+                capasActivas[id] = layer;
+                actualizarAlertasVisibles();
+            })
+            .catch(e => console.error("Error KML:", e));
+
     } else {
+        // --- LÓGICA GEOJSON ---
         fetch(ruta).then(r => r.json()).then(data => {
-            const layer = L.geoJSON(data, estiloMapaNormal);
+            const layer = L.geoJSON(data, {
+                style: feature => {
+                    const cat = (mapaDatos.categoria || '').trim().toLowerCase();
+                    if (cat === 'pendiente') {
+                         const color = feature.properties.fill || '#FF5722';
+                         return { fillColor: color, color: color, weight: 1, fillOpacity: 0.5 };
+                    }
+                    if (feature.geometry.type.includes('Polygon')) return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
+                    return { color: '#FF0000', weight: 2 };
+                },
+                onEachFeature: (f, l) => { 
+                    l.bindPopup("<b>" + mapaDatos.categoria + ":</b> " + mapaDatos.nombre_mapa); 
+                }
+            });
             layerFondo.addLayer(layer);
             if(!ultimaPosicion) map.fitBounds(layer.getBounds());
             capasActivas[id] = layer;
+            actualizarAlertasVisibles();
         }).catch(e => console.error(e));
     }
-    actualizarAlertasVisibles();
 }
+
 function removerCapaVisual(id) {
     if (capasActivas[id]) {
         if (capasActivas[id].type !== 'logic_only') layerFondo.removeLayer(capasActivas[id]);
@@ -167,7 +259,7 @@ function removerCapaVisual(id) {
     }
 }
 
-// --- 4. GESTIÓN DE ALERTAS (ESTILO NARANJA GRUESO) ---
+// --- 4. GESTIÓN DE ALERTAS ---
 function cargarDatosDeAlertas() {
     fetch('Api/api_mapa.php?action=fetch_markers').then(r => r.json()).then(res => {
         if (res.success && res.markers) {
@@ -179,7 +271,6 @@ function cargarDatosDeAlertas() {
                     const geom = JSON.parse(row.geojson);
                     const props = { ...row }; delete props.geojson;
                     
-                    // A. SI ES PUNTO
                     if (geom.type === 'Point') {
                         const m = L.marker([geom.coordinates[1], geom.coordinates[0]], { 
                             icon: L.icon({ iconUrl: props.icono_url, iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] }) 
@@ -189,14 +280,13 @@ function cargarDatosDeAlertas() {
                         asignarDatosComunes(m, props, isAdmin);
                         marcadoresPeligro.push(m);
                     } 
-                    // B. SI ES POLÍGONO (CAMBIO VISUAL AQUÍ)
                     else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
                         const m = L.geoJSON(geom, {
                             style: { 
-                                color: '#1900bd',  // Naranja Intenso
-                                weight: 5,         // Borde grueso
-                                fillOpacity: 0.2,  // Relleno suave
-                                dashArray: '10, 10' // Opcional: Borde punteado para destacar más
+                                color: '#FF5722',  
+                                weight: 5,         
+                                fillOpacity: 0.2,  
+                                dashArray: '10, 10' 
                             }
                         });
                         m.tipo_geom = 'Polygon';
@@ -240,7 +330,7 @@ function actualizarAlertasVisibles() {
     });
 }
 
-// --- ALGORITMO: PUNTO EN POLÍGONO (Sin cambios) ---
+// --- ALGORITMO: PUNTO EN POLÍGONO ---
 function isMarkerInsidePolygon(lat, lng, poly) {
     let polys = [];
     if (poly.type === 'Polygon') polys.push(poly.coordinates);
@@ -291,7 +381,7 @@ function checkPeligros(lat, lng) {
     }
 }
 
-// --- 5. GESTIÓN OFFLINE (Sin cambios) ---
+// --- 5. GESTIÓN OFFLINE ---
 window.descargarZona = function(idZona) {
     const urls = [];
     LISTA_MAPAS.forEach(m => { if (m.id_zona == idZona && m.ruta_archivo && m.ruta_archivo !== 'manual') urls.push(m.ruta_archivo); });
@@ -316,7 +406,7 @@ function setupServiceWorkerListener() {
     }
 }
 
-// --- 6. EVENTOS UI (Sin cambios) ---
+// --- 6. EVENTOS UI Y GPS ---
 function setupUIEvents() {
     const form = document.getElementById('markerFormContainer');
     let currentLatLng;
@@ -345,29 +435,67 @@ function setupUIEvents() {
     const btnBorrar = document.getElementById('borrarMarcadores');
     if(btnBorrar) btnBorrar.onclick = () => { if(confirm("¿RESETEAR TODO?")) fetch('Api/api_mapa.php?action=delete_all', { method: 'POST' }).then(() => { cargarDatosDeAlertas(); alert("Reset completo."); }); };
 }
+
 window.borrarMarcador = function(id) { if(confirm("¿Eliminar?")) fetch('Api/api_mapa.php', { method: 'POST', body: JSON.stringify({ action: 'delete_marker', id: id }) }).then(r=>r.json()).then(res=>{ if(res.success) cargarDatosDeAlertas(); }); };
+
 window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 0) {
     const data = { action: 'add_marker', lat: ll.lat, lng: ll.lng, nombre: nom, descripcion: desc, nivel: nivel, radio: radio, id_mapa: id_destino };
     fetch('Api/api_mapa.php', { method:'POST', body:JSON.stringify(data) }).then(r=>r.json()).then(res=>{ if(res.success) { cargarDatosDeAlertas(); alert("Guardado."); } });
 };
+
 window.reportarUser = function() {
     const msg = prompt("⚠️ REPORTE SOS"); if(!msg) return;
     navigator.geolocation.getCurrentPosition(p => saveMarker({lat: p.coords.latitude, lng: p.coords.longitude}, "🚨 SOS", msg, "Critico", 20, 1), null, {enableHighAccuracy:true});
 };
+
 window.toggleAlertas = function() {
     alertasSilenciadas = !alertasSilenciadas;
     const btn = document.getElementById('btnToggleAlertas');
     if (alertasSilenciadas) { btn.className = "btn-panel btn-alert-off"; btn.innerHTML = '<i class="fas fa-bell-slash"></i> OFF'; document.getElementById('alertas').innerHTML = ''; } 
     else { btn.className = "btn-panel btn-alert-on"; btn.innerHTML = '<i class="fas fa-bell"></i> ON'; if(ultimaPosicion) checkPeligros(ultimaPosicion[0], ultimaPosicion[1]); }
 };
+
 window.iniciarRastreoGPS = function() {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) { console.warn("GPS no soportado"); return; }
+    
+    const opcionesGPS = {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000 
+    };
+
     watchId = navigator.geolocation.watchPosition(p => {
-        const lat = p.coords.latitude; const lng = p.coords.longitude; ultimaPosicion = [lat, lng];
-        if(userMarker) userMarker.setLatLng([lat, lng]); else if(map) userMarker = L.circleMarker([lat, lng], { radius: 8, fillColor: "#3498db", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
+        const lat = p.coords.latitude; 
+        const lng = p.coords.longitude; 
+        const accuracy = p.coords.accuracy; 
+        ultimaPosicion = [lat, lng];
+
+        let colorRadio = '#3498db'; 
+        let advertencia = "";
+
+        if (accuracy > 2000) { colorRadio = '#e74c3c'; advertencia = " (Mala Señal)"; } 
+        else if (accuracy > 50) { colorRadio = '#f39c12'; advertencia = " (Señal Débil)"; }
+
+        if(userMarker) {
+            userMarker.setLatLng([lat, lng]);
+            userMarker.bindPopup("<b>Estás aquí</b><br>Precisión: " + Math.round(accuracy) + "m" + advertencia);
+        } else if(map) {
+            userMarker = L.circleMarker([lat, lng], { radius: 8, fillColor: "#3498db", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
+        }
+
+        if (accuracyCircle) {
+            accuracyCircle.setLatLng([lat, lng]);
+            accuracyCircle.setRadius(accuracy);
+            accuracyCircle.setStyle({ color: colorRadio, fillColor: colorRadio });
+        } else if(map) {
+            accuracyCircle = L.circle([lat, lng], { radius: accuracy, color: colorRadio, fillColor: colorRadio, fillOpacity: 0.15, weight: 1 }).addTo(map);
+        }
+
         checkPeligros(lat, lng);
-    }, null, { enableHighAccuracy: true });
+
+    }, err => { console.error("Error GPS", err); }, opcionesGPS);
 };
+
 window.centrarEnUsuario = function() { if(ultimaPosicion && map) { map.setView(ultimaPosicion, 16, {animate: true}); } };
 
 initMap();
