@@ -168,7 +168,7 @@ if ($es_admin) {
             
             <label style="font-size:0.85em; font-weight:bold; color:#7f8c8d;">Nivel de Riesgo:</label>
             <select id="popupIcon">
-                <option value="Critico">🔴 Crítico</option>
+                <option value="Critico">🔴 Críticooo</option>
                 <option value="Alto">🟠 Alto</option>
                 <option value="Medio">🟢 Medio</option>
             </select>
