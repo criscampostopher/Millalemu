@@ -1,85 +1,114 @@
 /* ==========================================================
-   sw.js - Service Worker v2 (Robustecido)
+   sw.js - Service Worker v5 (Estrategia Híbrida Inteligente)
    ========================================================== */
-const CACHE_NAME = 'millalemu-v2-fix'; // CAMBIO: Versión nueva para forzar actualización
+const CACHE_NAME = 'millalemu-v5-hybrid'; // Cambiamos versión para limpiar lo anterior
 const URLS_TO_CACHE = [
-    './',
     './index.php',
     './style_visor.css',
+    './style.css',
     './script_visor.js',
+    // Librerías externas
     'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
     'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
     'https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js'
-    // Quitamos el audio de Google de aquí para evitar errores de CORS que bloqueen la instalación
 ];
 
 // 1. INSTALACIÓN
 self.addEventListener('install', event => {
-    self.skipWaiting(); // Forzar activación inmediata
+    self.skipWaiting();
     event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-            console.log('SW: Cacheando App Shell v2');
-            return cache.addAll(URLS_TO_CACHE);
+        caches.open(CACHE_NAME).then(async cache => {
+            console.log('SW: Instalando recursos base...');
+            const promesas = URLS_TO_CACHE.map(async url => {
+                try {
+                    const response = await fetch(url);
+                    if (response.ok) return cache.put(url, response);
+                } catch (e) { console.warn('No se pudo cachear:', url); }
+            });
+            return Promise.all(promesas);
         })
     );
 });
 
-// 2. ACTIVACIÓN (Limpieza profunda)
+// 2. ACTIVACIÓN (Limpieza automática de cachés viejas)
 self.addEventListener('activate', event => {
     event.waitUntil(
-        caches.keys().then(cacheNames => {
-            return Promise.all(
-                cacheNames.map(cacheName => {
-                    if (cacheName !== CACHE_NAME) {
-                        console.log('SW: Borrando caché antigua', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
-        })
+        caches.keys().then(keys => Promise.all(
+            keys.map(key => {
+                if (key !== CACHE_NAME) return caches.delete(key);
+            })
+        ))
     );
-    self.clients.claim(); // Tomar control de inmediato
+    self.clients.claim();
 });
 
-// 3. INTERCEPTOR DE RED
+// 3. INTERCEPTOR INTELIGENTE (EL CAMBIO CLAVE)
 self.addEventListener('fetch', event => {
     if (event.request.method !== 'GET') return;
+
+    // A) ESTRATEGIA "NETWORK FIRST" (Internet Primero)
+    // Solo para el archivo principal HTML (index.php).
+    // Esto asegura que si tienes internet, SIEMPRE veas la versión real (Admin/Worker).
+    if (event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request)
+                .then(networkResponse => {
+                    // Si Internet funciona, devolvemos la página fresca...
+                    // ... Y actualizamos la caché en segundo plano para el futuro.
+                    return caches.open(CACHE_NAME).then(cache => {
+                        cache.put(event.request, networkResponse.clone());
+                        return networkResponse;
+                    });
+                })
+                .catch(() => {
+                    // Si Internet falla, usamos la copia guardada (Modo Offline)
+                    return caches.match(event.request).then(cachedRes => {
+                        if (cachedRes) return cachedRes;
+                        // Salvavidas: si la URL exacta falló, devolvemos el index.php genérico
+                        return caches.match('./index.php');
+                    });
+                })
+        );
+        return;
+    }
+
+    // B) ESTRATEGIA "CACHE FIRST" (Caché Primero)
+    // Para imágenes, scripts, mapas y estilos.
+    // Aquí preferimos velocidad y no gastar datos.
     event.respondWith(
-        caches.match(event.request).then(cachedResponse => {
-            if (cachedResponse) return cachedResponse;
-            return fetch(event.request);
-        })
+        (async () => {
+            try {
+                // Buscamos en caché
+                const cachedResponse = await caches.match(event.request, { ignoreSearch: true });
+                if (cachedResponse) return cachedResponse;
+                
+                // Si no está, descargamos de internet
+                return await fetch(event.request);
+            } catch (error) {
+                // Si falla todo (Offline y sin caché), no devolvemos nada o un error 404 silencioso
+                return new Response("Offline", { status: 404, statusText: "Offline" });
+            }
+        })()
     );
 });
 
-// 4. DESCARGA DE ZONAS (Con manejo de errores)
+// 4. DESCARGA DE ZONAS (Igual que antes)
 self.addEventListener('message', event => {
     if (event.data.action === 'CACHE_NEW_ZONE') {
         const urls = event.data.urls;
-        
         event.waitUntil(
             caches.open(CACHE_NAME).then(async cache => {
-                // Intentamos cachear uno por uno para que un error no detenga todo
                 const promesas = urls.map(async url => {
                     try {
-                        const response = await fetch(url);
-                        if (!response.ok) throw new Error('Network response not ok');
-                        return cache.put(url, response);
-                    } catch (error) {
-                        console.warn('Fallo al cachear:', url, error);
-                        // No lanzamos error para continuar con los otros archivos
-                    }
+                        const urlFresca = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                        const response = await fetch(urlFresca);
+                        if (response.ok) return cache.put(url, response);
+                    } catch (e) { console.error('Error descarga zona:', url); }
                 });
-                
                 await Promise.all(promesas);
-
-                // Avisamos al cliente que terminamos (aunque alguno haya fallado)
                 self.clients.matchAll().then(clients => {
-                    clients.forEach(client => client.postMessage({
-                        action: 'ZONE_CACHED_OK',
-                        zoneId: event.data.zoneId
-                    }));
+                    clients.forEach(c => c.postMessage({ action: 'ZONE_CACHED_OK', zoneId: event.data.zoneId }));
                 });
             })
         );

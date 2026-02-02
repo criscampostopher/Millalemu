@@ -23,7 +23,7 @@ try {
         // 1. LEER MARCADORES 
         case 'fetch_markers':
             // Limpieza automática diaria
-            $pdo->exec("DELETE FROM public.peligro WHERE fecha_creacion::date < CURRENT_DATE");
+            //esto elimina todas las elrtas de la bd ???, que estupides $pdo->exec("DELETE FROM public.peligro WHERE fecha_creacion::date < CURRENT_DATE");
 
             $sql = "SELECT p.id, p.nombre, p.descripcion, p.tipo, p.nivel, p.id_mapa, p.radio_metros,
                     ST_AsGeoJSON(p.geom) AS geojson,
