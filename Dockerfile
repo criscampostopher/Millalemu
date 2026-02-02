@@ -1,21 +1,24 @@
-FROM php:8.2-apache
+FROM php:8.2
 
-# Instalar dependencias de PostgreSQL
-RUN apt-get update \
-    && apt-get install -y libpq-dev \
-    && docker-php-ext-install pdo_pgsql pgsql \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    apache2 \
+    && docker-php-ext-install pdo_pgsql pgsql
 
-# Habilitar mod_rewrite (para URLs limpias si usas .htaccess)
+# Copiar proyecto
+COPY . /var/www/html
+
+# Apache config mínima
+RUN echo "<VirtualHost *:8080>
+    DocumentRoot /var/www/html
+    <Directory /var/www/html>
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>" > /etc/apache2/sites-available/000-default.conf
+
 RUN a2enmod rewrite
 
-# Copiar el proyecto al directorio público de Apache
-COPY . /var/www/html/
+EXPOSE 8080
 
-# Permisos correctos (evita 502 por permisos)
-RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html
-
-# Puerto estándar
-EXPOSE 80
+CMD ["apachectl", "-D", "FOREGROUND"]
