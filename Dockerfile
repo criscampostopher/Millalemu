@@ -1,24 +1,17 @@
-FROM php:8.2
+FROM php:8.2-apache
 
-RUN apt-get update && apt-get install -y \
-    libpq-dev \
-    apache2 \
-    && docker-php-ext-install pdo_pgsql pgsql
+# Instalar dependencias y extensiones PostgreSQL
+RUN apt-get update && apt-get install -y libpq-dev \
+    && docker-php-ext-install pdo_pgsql pgsql \
+    && a2enmod rewrite
 
-# Copiar proyecto
+# Copiar el proyecto al docroot de Apache
 COPY . /var/www/html
 
-# Apache config mínima
-RUN echo "<VirtualHost *:8080>
-    DocumentRoot /var/www/html
-    <Directory /var/www/html>
-        AllowOverride All
-        Require all granted
-    </Directory>
-</VirtualHost>" > /etc/apache2/sites-available/000-default.conf
-
-RUN a2enmod rewrite
+# Script para usar el PORT de Railway
+COPY docker/start.sh /start.sh
+RUN chmod +x /start.sh
 
 EXPOSE 8080
 
-CMD ["apachectl", "-D", "FOREGROUND"]
+CMD ["/start.sh"]
