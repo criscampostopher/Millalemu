@@ -193,7 +193,7 @@ if ($es_admin) {
 
         <div style="flex:1; overflow-y:auto; padding-right:5px;">
             <?php if ($es_admin) { ?>
-                <h4 style="margin: 10px 0; color:#3498db; border-bottom: 2px solid #3498db; display:inline-block;">Subir Mapa</h4>
+                <h4 style="margin: 10px 0; color:#3498db; border-bottom: 2px solid #3498db; display:inline-block;">Subir Mapa Locooo</h4>
                 <form action="Api/api_subirMapa.php" method="post" enctype="multipart/form-data" id="uploadForm">
                     <label>1. Zona:</label>
                     <input list="lista_zonas" name="nombre_zona" placeholder="Escribe o selecciona..." required autocomplete="off">
