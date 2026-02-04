@@ -201,5 +201,7 @@ tr:hover { background: #e8f5e9; }
     transform: scale(1.05);
 }
 
+
+
 /* RESPONSIVE */
 @media (max-width:768px){ .cards{grid-template-columns:1fr;} }

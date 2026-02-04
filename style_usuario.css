@@ -193,6 +193,10 @@ body::before {
     box-shadow: 0 6px 15px rgba(46, 125, 50, 0.4);
 }
 
+
+
+
+
 /* Mensajes */
 .error-msg { background: #fee2e2; color: #b91c1c; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
 .sin-mapas { grid-column: 1 / -1; text-align: center; padding: 40px; background: white; border-radius: 12px; color: #7f8c8d; }

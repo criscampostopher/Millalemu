@@ -49,14 +49,15 @@ if ($es_admin) {
     $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 } else {
-    // B) Usuario: Carga asignados (AGREGADO: m.tipo_mapa)
+    // B) Usuario: Carga mapas SEGÚN ZONAS + VALIDACIÓN DE FECHAS
     $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona
             FROM public.mapa m 
-            JOIN public.usuario_mapa um ON m.id_mapa = um.id_mapa
-            LEFT JOIN public.zona z ON m.id_zona = z.id_zona
-            WHERE um.id_usuario = ? 
-            AND (um.fecha_inicio <= NOW()) 
-            AND (um.fecha_fin IS NULL OR um.fecha_fin >= NOW())
+            JOIN public.zona z ON m.id_zona = z.id_zona
+            JOIN public.usuario_zona uz ON z.id_zona = uz.id_zona 
+            WHERE uz.id_usuario = ? 
+            -- VALIDACIÓN DE FECHAS DE LA ZONA
+            AND (uz.fecha_inicio <= NOW()) 
+            AND (uz.fecha_fin IS NULL OR uz.fecha_fin >= NOW())
             ORDER BY z.nombre_zona ASC, m.categoria ASC";
             
     $stmt = $pdo->prepare($sql);

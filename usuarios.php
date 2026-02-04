@@ -1,30 +1,69 @@
 <?php
 // ==========================================================
-// Archivo: usuarios.php
+// Archivo: usuarios.php (Versión ZONAS)
 // ==========================================================
 session_start();
 require_once __DIR__ . '/Config/db_config.php';
 
-// Verificar sesión
+
 if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { 
     header("Location: login.php"); 
     exit; 
 }
 
-$usuarios = []; 
-$mapas_disponibles = [];
+// 1. MINI-API INTERNA (ZONAS)
+$inputJSON = file_get_contents('php://input');
+$input = json_decode($inputJSON, true);
 
-try {
-    $stmt = $pdo->query("SELECT id_usuario AS id, nombre_usuario, email, tipo_usuario FROM public.usuario ORDER BY id_usuario ASC");
-    $usuarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    $mapas_disponibles = $pdo->query("SELECT id_mapa, nombre_mapa FROM public.mapa ORDER BY id_mapa ASC")->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) { 
-    $error = "Error: " . $e->getMessage(); 
+if (isset($input['action']) && (strpos($input['action'], 'zona') !== false || $input['action'] === 'get_user_zonas')) {
+    header('Content-Type: application/json');
+    $res = ['success' => false];
+    try {
+        if ($input['action'] === 'get_user_zonas') {
+            // Traer zonas asignadas
+            $stmt = $pdo->prepare("SELECT uz.id_asignacion, z.nombre_zona FROM public.usuario_zona uz JOIN public.zona z ON uz.id_zona = z.id_zona WHERE uz.id_usuario = ? ORDER BY z.nombre_zona ASC");
+            $stmt->execute([$input['id_usuario']]);
+            $res['zonas'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $res['success'] = true;
+        } elseif ($input['action'] === 'assign_zona') {
+            // Verificar duplicados
+            $check = $pdo->prepare("SELECT 1 FROM public.usuario_zona WHERE id_usuario = ? AND id_zona = ?");
+            $check->execute([$input['id_usuario'], $input['id_zona']]);
+            
+            if($check->fetch()) { 
+                $res['error'] = "Zona ya asignada."; 
+            } else {
+                // INSERT CON FECHAS
+                $sql = "INSERT INTO public.usuario_zona (id_usuario, id_zona, fecha_inicio, fecha_fin) VALUES (?, ?, ?, ?)";
+                
+                // Manejo de nulos para fecha fin
+                $fin = !empty($input['fin']) ? $input['fin'] : null;
+                $inicio = !empty($input['inicio']) ? $input['inicio'] : date('Y-m-d H:i:s');
+
+                $pdo->prepare($sql)->execute([$input['id_usuario'], $input['id_zona'], $inicio, $fin]);
+                $res['success'] = true;
+            }
+        
+        } elseif ($input['action'] === 'delete_zona') {
+            // Borrar zona
+            $pdo->prepare("DELETE FROM public.usuario_zona WHERE id_asignacion = ?")->execute([$input['id_asignacion']]);
+            $res['success'] = true;
+        }
+    } catch (Exception $e) { $res['error'] = $e->getMessage(); }
+    echo json_encode($res); exit;
 }
+
+// 2. CARGA DE DATOS HTML
+if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { header("Location: login.php"); exit; }
+
+$usuarios = $pdo->query("SELECT id_usuario AS id, nombre_usuario, email, tipo_usuario FROM public.usuario ORDER BY id_usuario ASC")->fetchAll(PDO::FETCH_ASSOC);
+// CAMBIO: Cargamos ZONAS en vez de Mapas
+$zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona ORDER BY nombre_zona ASC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
+
+
 <head>
     <meta charset="UTF-8">
     <title>Gestión de Usuarios - Millalemu</title>
@@ -104,6 +143,24 @@ try {
         .btn-mini { padding: 5px 8px; border-radius: 4px; border: none; cursor: pointer; margin-left: 5px; color: white; }
         .btn-mini-del { background: #e74c3c; }
         .btn-mini-edit { background: #3498db; }
+        /* --- AGREGAR ESTO EN EL CSS --- */
+.zona-item-card { 
+    display: flex; justify-content: space-between; align-items: center; 
+    background: #f9f9f9; border: 1px solid #eee; 
+    padding: 10px; margin-bottom: 5px; border-radius: 4px; 
+    border-left: 4px solid #2ecc71; 
+}
+.scroll-container {
+    max-height: 250px;       /* Altura máxima */
+    overflow-y: auto;        /* Scroll automático */
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 5px;
+    background: #fff;
+    margin-top: 10px;
+}
+.scroll-container::-webkit-scrollbar { width: 8px; }
+.scroll-container::-webkit-scrollbar-thumb { background: #bdc3c7; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -114,7 +171,7 @@ try {
         <a href="menuadmin.php"><i class="fas fa-home"></i> Inicio</a>
         <a href="index.php"><i class="fas fa-eye"></i> <b>Visor Global</b></a>
         <a href="mapas.php"><i class="fas fa-layer-group"></i> Gestión de Mapas</a>
-        <a href="usuarios.php" class="active"><i class="fas fa-users"></i> Usuarios</a>
+        <a href="usuarios.php" class="active"><i class="fas fa-users"></i> Usuario</a>
         
         <a href="logout.php" style="margin-top:auto; color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Salir</a>
     </aside>
@@ -137,7 +194,7 @@ try {
                         <td><?= strtoupper($u['tipo_usuario']) ?></td>
                         <td>
                             <?php if($u['id'] != 1): ?>
-                            <button class="btn-action btn-assign" onclick="gestionarMapas(<?= $u['id'] ?>, '<?= $u['nombre_usuario'] ?>')" title="Asignar Mapa"><i class="fas fa-map-marked-alt"></i></button>
+                            <button class="btn-action btn-assign" onclick="gestionarZonas(<?= $u['id'] ?>, '<?= $u['nombre_usuario'] ?>')" title="Asignar Zonas"><i class="fas fa-map-marked-alt"></i></button>
                             <button class="btn-action btn-edit" onclick="editar(<?= $u['id'] ?>, '<?= $u['nombre_usuario'] ?>', '<?= $u['email'] ?>', '<?= $u['tipo_usuario'] ?>')" title="Editar Usuario"><i class="fas fa-edit"></i></button>
                             <?php if($u['id'] != $_SESSION['id_usuario']): ?>
                                 <button class="btn-action btn-del" onclick="eliminar(<?= $u['id'] ?>)" title="Eliminar"><i class="fas fa-trash"></i></button>
@@ -184,36 +241,42 @@ try {
     </div>
 
     <div id="assignModal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" onclick="cerrarModal('assignModal')">&times;</span>
-            <h2 style="color:#f1c40f;"><i class="fas fa-map-marked-alt"></i> Asignar Mapa</h2>
-            <p>Usuario: <b id="assignUserName" style="color:#333;"></b></p>
-            
-            <form id="assignForm" style="background:#fffbe6; padding:20px; border-radius:8px; border:1px solid #f1c40f; margin-bottom:20px;">
-                <input type="hidden" id="assignUserId">
-                <input type="hidden" id="isUpdate" value="0"> 
-                <div class="form-group">
-                    <label style="color:#d4ac0d;">Seleccionar Mapa:</label>
-                    <select id="assignMapId" required style="width:100%;">
-                        <option value="">-- Selecciona Mapa --</option>
-                        <?php foreach($mapas_disponibles as $m): ?><option value="<?= $m['id_mapa'] ?>"><?= $m['nombre_mapa'] ?></option><?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-group" style="display:flex; gap:10px;">
-                    <div style="flex:1;"><label style="color:#d4ac0d;">Inicio:</label><input type="datetime-local" id="assignStart" required></div>
-                    <div style="flex:1;"><label style="color:#d4ac0d;">Fin:</label><input type="datetime-local" id="assignEnd"></div>
-                </div>
-                
-                <button type="submit" id="btnAssignSubmit" class="btn-new" style="width:100%; background:#f1c40f; color:#333; margin-top:10px;">Asignar Mapa</button>
-                <button type="button" id="btnCancelEdit" style="display:none; width:100%; margin-top:10px; padding:10px; background:#ccc; border:none; border-radius:6px; cursor:pointer; color:#333; font-weight:bold;" onclick="resetMapForm()">Cancelar Edición</button>
-            </form>
-
-            <div style="border-top:2px dashed #eee; padding-top:15px;">
-                <h4 style="color:#555; margin-top:0;">Mapas Asignados:</h4>
-                <div id="contenedorMapasUsuario"></div>
+    <div class="modal-content">
+        <span class="close-btn" onclick="cerrarModal('assignModal')">&times;</span>
+        <h2 style="color:#f1c40f;">Asignar Zonas</h2>
+        <p>Usuario: <b id="assignUserName"></b></p>
+        
+        <form id="assignForm" style="background:#fffbe6; padding:15px; border-radius:5px; margin-bottom:15px;">
+            <input type="hidden" id="assignUserId">
+            <<div class="form-group">
+                <label>Seleccionar Zona:</label>
+                <select id="assignZoneId" required style="width:100%;">
+                    <option value="">-- Selecciona Zona --</option>
+                    <?php foreach($zonas_disponibles as $z): ?>
+                        <option value="<?= $z['id_zona'] ?>"><?= $z['nombre_zona'] ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
+
+            <div style="display:flex; gap:10px;">
+                <div class="form-group" style="flex:1;">
+                    <label>Desde:</label>
+                    <input type="datetime-local" id="assignStart" value="<?= date('Y-m-d\TH:i') ?>">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label>Hasta (Opcional):</label>
+                    <input type="datetime-local" id="assignEnd">
+                </div>
+            </div>
+            <button type="submit" class="btn-new" style="width:100%; background:#f1c40f; color:#333;">Asignar</button>
+        </form>
+
+        <h4 style="margin-bottom:5px;">Zonas Asignadas:</h4>
+        <div id="contenedorZonasUsuario" class="scroll-container">
+            <small>Cargando...</small>
         </div>
     </div>
+</div>
 
     <script>
         let isEditingUser = false;
@@ -241,93 +304,70 @@ try {
         function eliminar(id) { if(confirm('¿Eliminar usuario?')) enviarAPI({action:'delete',id:id}); }
 
         // --- MAPAS ---
-        function gestionarMapas(idUser, nombreUser) { 
-            document.getElementById('assignUserId').value=idUser; document.getElementById('assignUserName').innerText=nombreUser; 
-            resetMapForm();
-            document.getElementById('assignModal').style.display='block'; 
-            cargarMapasUsuario(idUser);
-        }
+       function gestionarZonas(idUser, nombreUser) { 
+        document.getElementById('assignUserId').value = idUser; 
+        document.getElementById('assignUserName').innerText = nombreUser; 
+        document.getElementById('assignModal').style.display = 'block'; 
+        cargarZonasUsuario(idUser);
+    }
 
-        function resetMapForm() {
-            document.getElementById('assignForm').reset();
-            document.getElementById('assignMapId').disabled = false; 
-            document.getElementById('isUpdate').value = "0";
-            document.getElementById('btnAssignSubmit').innerText = "Asignar Mapa";
-            document.getElementById('btnCancelEdit').style.display = 'none';
-            const idU = document.getElementById('assignUserId').value;
-            if(idU) document.getElementById('assignUserId').value = idU; 
-        }
+    function cargarZonasUsuario(idUser) {
+        const div = document.getElementById('contenedorZonasUsuario');
+        div.innerHTML = '<div style="text-align:center;color:#888;">Cargando...</div>';
+        
+        fetch('usuarios.php', { 
+            method: 'POST', 
+            body: JSON.stringify({action: 'get_user_zonas', id_usuario: idUser}) 
+        })
+        .then(r => r.json()).then(res => {
+            div.innerHTML = '';
+            if(res.zonas && res.zonas.length > 0) {
+                res.zonas.forEach(z => {
+                    div.innerHTML += `
+                        <div class="zona-item-card">
+                            <span>📍 <strong>${z.nombre_zona}</strong></span>
+                            <button class="btn-action btn-del" onclick="quitarZona(${idUser}, ${z.id_asignacion})" title="Quitar">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>`;
+                });
+            } else {
+                div.innerHTML = '<small style="display:block;padding:10px;color:#777;">Sin zonas asignadas.</small>';
+            }
+        });
+    }
 
-        function cargarMapasUsuario(idUser) {
-            const div = document.getElementById('contenedorMapasUsuario');
-            div.innerHTML = '<div style="color:#777; text-align:center;">Cargando...</div>';
-            fetch('Api/api_usuarios.php', { method: 'POST', body: JSON.stringify({action: 'get_user_maps', id_usuario: idUser}) })
-            .then(r=>r.json()).then(res=>{
-                div.innerHTML = '';
-                if(res.maps && res.maps.length > 0) {
-                    res.maps.forEach(m => {
-                        let inicio = m.fecha_inicio ? m.fecha_inicio.replace(' ', 'T') : '';
-                        let fin = m.fecha_fin ? m.fecha_fin.replace(' ', 'T') : '';
-                        let textoFechas = m.fecha_inicio.substring(0,16) + ' ➜ ' + (m.fecha_fin ? m.fecha_fin.substring(0,16) : '∞');
-
-                        div.innerHTML += `
-                            <div class="map-item-card">
-                                <div style="color:#333;"><strong>${m.nombre_mapa}</strong><br><small style="color:#666;">${textoFechas}</small></div>
-                                <div>
-                                    <button class="btn-mini btn-mini-edit" onclick='prepararEdicion(${m.id_mapa}, "${inicio}", "${fin}")' title="Modificar Fechas"><i class="fas fa-pen"></i></button>
-                                    <button class="btn-mini btn-mini-del" onclick="quitarMapa(${idUser}, ${m.id_mapa})" title="Quitar"><i class="fas fa-trash"></i></button>
-                                </div>
-                            </div>`;
-                    });
-                } else div.innerHTML = '<small style="color:#777;">Sin mapas asignados.</small>';
-            });
-        }
-
-        function prepararEdicion(idMapa, inicio, fin) {
-            document.getElementById('assignMapId').value = idMapa;
-            document.getElementById('assignMapId').disabled = true; 
-            document.getElementById('assignStart').value = inicio.substring(0,16);
-            document.getElementById('assignEnd').value = fin ? fin.substring(0,16) : '';
-            document.getElementById('isUpdate').value = "1";
-            document.getElementById('btnAssignSubmit').innerText = "Guardar Nuevas Fechas";
-            document.getElementById('btnCancelEdit').style.display = 'block';
-        }
-
-        document.getElementById('assignForm').onsubmit = (e) => { 
-            e.preventDefault(); 
-            const esUpdate = document.getElementById('isUpdate').value === "1";
-            const data = {
-                action: esUpdate ? 'update_map_assignment' : 'assign_map',
-                id_usuario: document.getElementById('assignUserId').value,
-                id_mapa: document.getElementById('assignMapId').value,
-                inicio: document.getElementById('assignStart').value,
-                fin: document.getElementById('assignEnd').value
-            };
-            
-            fetch('Api/api_usuarios.php', { method:'POST', body:JSON.stringify(data) })
-            .then(r=>r.json()).then(res=>{
-                if(res.success) { 
-                    alert(esUpdate ? "✅ Fechas actualizadas" : "✅ Mapa asignado");
-                    cargarMapasUsuario(data.id_usuario); 
-                    resetMapForm();
-                } else alert('⚠️ ' + res.error);
-            });
+    document.getElementById('assignForm').onsubmit = (e) => { 
+        e.preventDefault(); 
+        const data = {
+            action: 'assign_zona',
+            id_usuario: document.getElementById('assignUserId').value,
+            id_zona: document.getElementById('assignZoneId').value,
+            // AGREGAMOS ESTO:
+            inicio: document.getElementById('assignStart').value,
+            fin: document.getElementById('assignEnd').value
         };
+        fetch('usuarios.php', { method:'POST', body:JSON.stringify(data) })
+        .then(r=>r.json()).then(res => {
+            if(res.success) { alert("✅ Zona asignada"); cargarZonasUsuario(data.id_usuario); } 
+            else alert('⚠️ ' + res.error);
+        });
+    };
 
-        function quitarMapa(idUser, idMapa) {
-            if(confirm("¿Quitar asignación?")) enviarAPI({action:'unassign_map', id_usuario:idUser, id_mapa:idMapa}, true);
+    function quitarZona(idUser, idAsignacion) {
+        if(confirm("¿Quitar zona?")) {
+            fetch('usuarios.php', { method:'POST', body:JSON.stringify({action:'delete_zona', id_asignacion: idAsignacion}) })
+            .then(r=>r.json()).then(res => {
+                if(res.success) cargarZonasUsuario(idUser);
+                else alert('Error: '+res.error);
+            });
         }
-
-        function enviarAPI(data, recargarMapas=false) { 
-            fetch('Api/api_usuarios.php', { method:'POST', body:JSON.stringify(data) })
-            .then(r=>r.json()).then(res=>{
-                if(res.success) { 
-                    if(recargarMapas) cargarMapasUsuario(data.id_usuario);
-                    else { alert("✅ Éxito"); location.reload(); }
-                } else alert('Error: '+res.error);
-            }); 
-        }
-        window.onclick = function(e) { if(e.target.className === 'modal') e.target.style.display='none'; }
-    </script>
+    }
+    
+    // Cierre de modal al clic fuera
+    window.onclick = function(e) { 
+        if(e.target.className === 'modal') e.target.style.display='none'; 
+    }
+</script>
 </body>
 </html>

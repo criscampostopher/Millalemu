@@ -234,6 +234,8 @@ function cargarCapaVisual(mapaDatos) {
     const id = mapaDatos.id_mapa;
     if (capasActivas[id]) return; 
 
+
+
     const ruta = mapaDatos.ruta_archivo;
     if (!ruta || ruta === 'manual') {
         capasActivas[id] = { type: 'logic_only' };
@@ -358,10 +360,42 @@ function cargarCapaVisual(mapaDatos) {
     }
 }
 
+// Función auxiliar para añadir capas, enfocar y actualizar sistema
 function agregarCapaAlMapa(layer, id) {
-    layerFondo.addLayer(layer);
-    if (!ultimaPosicion) try { map.fitBounds(layer.getBounds()); } catch(e){}
-    capasActivas[id] = layer;
+    if (capasActivas[id]) return; // Evitar duplicados
+
+    // 1. Lógica Original (Vital para tu sistema)
+    if (layerFondo) layerFondo.addLayer(layer); // Agregamos al grupo principal
+    capasActivas[id] = layer;                   // Registramos en memoria
+
+    // 2. Lógica de ZOOM (Fusionada: Admin + Usuario sin GPS)
+    let zoomAdminAplicado = false;
+
+    // A) PRIORIDAD: Si venimos del Admin con un mapa específico (?focus_map=X)
+    if (typeof MAPA_ID_ACTUAL !== 'undefined' && parseInt(id) === parseInt(MAPA_ID_ACTUAL)) {
+        console.log("📍 Enfocando mapa solicitado por Admin: " + id);
+        zoomAdminAplicado = true;
+        
+        // Delay para asegurar que Leaflet renderizó todo antes de mover la cámara
+        setTimeout(() => {
+            try {
+                if (layer.getBounds) {
+                    map.fitBounds(layer.getBounds(), { 
+                        padding: [50, 50], 
+                        maxZoom: 16, 
+                        animate: true 
+                    });
+                }
+            } catch(e) { console.warn("Error enfocando mapa admin", e); }
+        }, 600);
+    }
+
+    // B) FALLBACK: Tu lógica original (Solo si no hay GPS y no se usó el zoom de Admin)
+    if (!zoomAdminAplicado && !ultimaPosicion) {
+        try { map.fitBounds(layer.getBounds()); } catch(e){}
+    }
+
+    // 3. Actualizar Panel de Alertas (Vital para que aparezcan en la lista)
     if (typeof actualizarAlertasVisibles === 'function') actualizarAlertasVisibles();
 }
 
@@ -952,4 +986,26 @@ function actualizarDiagnostico(texto, color = "#00ff00") {
         p.style.color = color; 
     }
 }
+// --- AUTO-ARRANQUE ---
+document.addEventListener('DOMContentLoaded', function() {
+    // 1. Iniciar Service Worker
+    setupServiceWorkerListener();
+    
+    // 2. Iniciar GPS
+    iniciarGPS();
+
+    // 3. Si venimos desde el Admin con un mapa específico (?focus_map=X)
+    if (typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL > 0) {
+        console.log("Auto-cargando mapa ID:", MAPA_ID_ACTUAL);
+        
+        // Buscamos los datos de ese mapa en la lista global
+        const mapaObjetivo = LISTA_MAPAS.find(m => parseInt(m.id_mapa) === parseInt(MAPA_ID_ACTUAL));
+        
+        if (mapaObjetivo) {
+            cargarCapaVisual(mapaObjetivo);
+        } else {
+            console.warn("El mapa solicitado no está asignado a este usuario.");
+        }
+    }
+});
 initMap();

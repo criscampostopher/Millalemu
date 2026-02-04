@@ -125,9 +125,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
             $stmt->execute([$nombre_mapa_limpio, $tipo_mapa, $referencia_archivo, $categoria, $id_zona, $contentForBD]);
             $nuevo_id_mapa = $stmt->fetchColumn();
             
-            // Vincular usuario
-            $pdo->prepare("INSERT INTO public.usuario_mapa (id_usuario, id_mapa) VALUES (?, ?)")->execute([$id_usuario_actual, $nuevo_id_mapa]);
-
+         
+          
             // =========================================================
             // 4. GENERACIÓN DE ALERTAS (LÓGICA PRESERVADA AL 100%)
             // =========================================================
