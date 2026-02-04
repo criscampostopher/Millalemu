@@ -34,7 +34,8 @@ $id_usuario_actual = $_SESSION['id_usuario'] ?? 1;
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
     if (!$es_admin) { header("Location: ../index.php?status=error&msg=Acceso denegado"); exit; }
 
-    $dir = "../uploads/"; if (!file_exists($dir)) mkdir($dir, 0755, true); 
+    $dir = rtrim(getenv('UPLOAD_DIR') ?: '/uploads', '/') . '/';
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
     
     // 1. Datos del Formulario y Zona
     $categoria = $_POST['categoria'] ?? 'Escenario';
@@ -80,8 +81,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
                 }
                 if($kmlName) {
                     $contentForScanner = $zip->getFromName($kmlName);
-                    $ruta_final = "uploads/" . $uid . '-' . $nombre_mapa_limpio . '.kml';
-                    file_put_contents("../" . $ruta_final, $contentForScanner);
+                    $archivo_final = $uid . '-' . $nombre_mapa_limpio . '.kml';
+                    $ruta_fisica = $dir . $archivo_final;
+                    $ruta_final = "uploads/" . $archivo_final;
+                    file_put_contents($ruta_fisica, $contentForScanner);
                     $tipo_mapa = "KML"; 
                 } else {
                     $zip->close();
@@ -93,14 +96,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
             }
         } elseif ($ext === 'kml') {
             $contentForScanner = file_get_contents($tmp_name);
-            $ruta_final = "uploads/" . $uid . '-' . basename($nombre_original);
-            move_uploaded_file($tmp_name, "../" . $ruta_final);
+            $archivo_final = $uid . '-' . basename($nombre_original);
+            $ruta_fisica = $dir . $archivo_final;
+            $ruta_final = "uploads/" . $archivo_final;
+            move_uploaded_file($tmp_name, $ruta_fisica);
             $tipo_mapa = "KML";
         } elseif ($ext === 'geojson' || $ext === 'json') {
             $contentForScanner = file_get_contents($tmp_name);
             if (json_decode($contentForScanner) === null) { header("Location: ../index.php?status=error&msg=GeoJSON inválido"); exit; }
-            $ruta_final = "uploads/" . $uid . '-' . basename($nombre_original);
-            move_uploaded_file($tmp_name, "../" . $ruta_final);
+            $archivo_final = $uid . '-' . basename($nombre_original);
+            $ruta_fisica = $dir . $archivo_final;
+            $ruta_final = "uploads/" . $archivo_final;
+            move_uploaded_file($tmp_name, $ruta_fisica);
             $tipo_mapa = "GeoJSON";
         }
 
