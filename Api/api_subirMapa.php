@@ -34,7 +34,21 @@ $id_usuario_actual = $_SESSION['id_usuario'] ?? 1;
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
     if (!$es_admin) { header("Location: ../index.php?status=error&msg=Acceso denegado"); exit; }
 
-    $dir = "../uploads/"; if (!file_exists($dir)) mkdir($dir, 0755, true); 
+
+
+// Definimos la raíz del proyecto de forma absoluta
+$baseDir = dirname(__DIR__); 
+// Ruta física donde se guardarán los archivos (ej: /app/uploads/)
+$uploadDir = $baseDir . '/uploads/'; 
+
+// Crear carpeta si no existe
+if (!is_dir($uploadDir)) {
+    if (!mkdir($uploadDir, 0755, true)) {
+        // Si falla, detenemos todo y avisamos
+        header("Location: ../index.php?status=error&msg=Error de permisos en servidor: No se puede crear uploads."); 
+        exit;
+    }
+}
     
     // 1. Datos del Formulario y Zona
     $categoria = $_POST['categoria'] ?? 'Escenario';
@@ -80,8 +94,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
                 }
                 if($kmlName) {
                     $contentForScanner = $zip->getFromName($kmlName);
-                    $ruta_final = "uploads/" . $uid . '-' . $nombre_mapa_limpio . '.kml';
-                    file_put_contents("../" . $ruta_final, $contentForScanner);
+                   
+$nombre_archivo_final = $uid . '-' . $nombre_mapa_limpio . '.kml';
+$ruta_final = "uploads/" . $nombre_archivo_final; // Ruta para la BD (relativa)
+
+// Guardamos usando la ruta FÍSICA ABSOLUTA
+if (file_put_contents($uploadDir . $nombre_archivo_final, $contentForScanner) === false) {
+    header("Location: ../index.php?status=error&msg=Error escribiendo archivo KMZ en disco."); exit;
+}
                     $tipo_mapa = "KML"; 
                 } else {
                     $zip->close();
@@ -93,14 +113,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
             }
         } elseif ($ext === 'kml') {
             $contentForScanner = file_get_contents($tmp_name);
-            $ruta_final = "uploads/" . $uid . '-' . basename($nombre_original);
-            move_uploaded_file($tmp_name, "../" . $ruta_final);
+            $nombre_archivo_final = $uid . '-' . basename($nombre_original);
+            $ruta_final = "uploads/" . $nombre_archivo_final; // Ruta para BD
+            if (!move_uploaded_file($tmp_name, $uploadDir . $nombre_archivo_final)) {
+                header("Location: ../index.php?status=error&msg=Error moviendo archivo KML."); exit;
+            }
             $tipo_mapa = "KML";
         } elseif ($ext === 'geojson' || $ext === 'json') {
             $contentForScanner = file_get_contents($tmp_name);
             if (json_decode($contentForScanner) === null) { header("Location: ../index.php?status=error&msg=GeoJSON inválido"); exit; }
-            $ruta_final = "uploads/" . $uid . '-' . basename($nombre_original);
-            move_uploaded_file($tmp_name, "../" . $ruta_final);
+           // --- REEMPLAZO BLOQUE 4 (GeoJSON) ---
+$nombre_archivo_final = $uid . '-' . basename($nombre_original);
+$ruta_final = "uploads/" . $nombre_archivo_final; // Ruta para BD
+
+// Movemos usando la ruta FÍSICA ABSOLUTA
+if (!move_uploaded_file($tmp_name, $uploadDir . $nombre_archivo_final)) {
+    header("Location: ../index.php?status=error&msg=Error moviendo archivo GeoJSON."); exit;
+}
             $tipo_mapa = "GeoJSON";
         }
 
