@@ -241,8 +241,30 @@ function cargarCapaVisual(mapaDatos) {
         return; 
     }
 
-    const extension = ruta.split('.').pop().toLowerCase();
+    let extension = "";
     
+    // Convertimos a minúsculas para evitar problemas de "GeoJSON" vs "geojson"
+    let tipoBD = (mapaDatos.tipo_mapa || "").toLowerCase().trim();
+
+    // 1. Prioridad: Lo que diga la Base de Datos
+    if (tipoBD === 'geojson' || tipoBD === 'json') {
+        extension = 'geojson';
+    } 
+    else if (tipoBD === 'kml' || tipoBD === 'kmz') {
+        extension = 'kml';
+    }
+    // 2. Si es la API (api_descargar_mapa.php), SIEMPRE es GeoJSON por defecto
+    else if (ruta.indexOf('api_descargar_mapa.php') !== -1) {
+        console.log("Map via API detected (" + id + "): Forcing GeoJSON");
+        extension = 'geojson';
+    }
+    // 3. Último recurso: Mirar la extensión del archivo (para uploads viejos)
+    else {
+        // split('?')[0] elimina parámetros extra como ?t=12345
+        extension = ruta.split('.').pop().split('?')[0].toLowerCase();
+    }
+
+    console.log(`Cargando mapa ${id}: Tipo=${extension} Ruta=${ruta}`);
     // --- KML (Estilos) ---
     if (extension === 'kml') {
         fetch(ruta).then(res => res.text()).then(kmlText => {
@@ -858,36 +880,49 @@ window.descargarZona = function(idZona) {
 };
 function setupServiceWorkerListener() {
     if ('serviceWorker' in navigator) {
-        // 1. REGISTRAR (ENCENDER) EL SERVICE WORKER
-        // Esto le dice al navegador: "Oye, usa el archivo sw.js como cerebro offline"
+        
+        // 1. REGISTRO ROBUSTO
         navigator.serviceWorker.register('sw.js')
             .then(reg => {
-                console.log("✅ Sistema Offline iniciado correctamente.", reg.scope);
+                // Si hay un SW esperando (actualización), forzamos que tome el control
+                if (reg.waiting) {
+                    reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+                console.log("✅ SW v10 Registrado.");
+                
+                // Actualizamos la página automáticamente si detectamos que el SW cambió
+                reg.onupdatefound = () => {
+                    const installingWorker = reg.installing;
+                    installingWorker.onstatechange = () => {
+                        if (installingWorker.state === 'installed') {
+                            if (navigator.serviceWorker.controller) {
+                                console.log("Nueva versión disponible. Recargando...");
+                                window.location.reload();
+                            }
+                        }
+                    };
+                };
             })
-            .catch(err => {
-                console.error("❌ Error al iniciar Sistema Offline:", err);
-                alert("Error crítico: No se pudo iniciar el modo offline. Revisa que el archivo sw.js esté en la carpeta raíz.");
-            });
+            .catch(err => console.error("❌ Error SW:", err));
 
-        // 2. ESCUCHAR RESPUESTAS (Cuando termina de descargar)
+        // 2. ESCUCHAR MENSAJES (Zona Descargada)
         navigator.serviceWorker.addEventListener('message', event => {
             if(event.data.action === 'ZONE_CACHED_OK'){
                 document.getElementById('loader').style.display = 'none';
-                alert("✅ ZONA DESCARGADA EXITOSAMENTE.\n\nAhora puedes apagar el internet y las alertas seguirán funcionando en esta zona.");
+                alert("✅ ZONA DESCARGADA.\nAhora funcionará Offline.");
             }
         });
 
-        // 3. DETECTAR CUANDO ESTÁ LISTO
-        // Si el SW toma el control, recargamos la página una vez para que el botón funcione
-        navigator.serviceWorker.ready.then(() => {
-            if (!navigator.serviceWorker.controller) {
-                // Si está listo pero no controla, recargamos suavemente
-                // window.location.reload(); 
-                console.log("El Servicio está listo. Si el botón falla, recarga la página.");
-            }
+        // 3. DETECTAR CAMBIO DE CONTROLADOR
+        let refreshing;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (refreshing) return;
+            window.location.reload();
+            refreshing = true;
         });
+
     } else {
-        console.warn("Este navegador no soporta modo Offline.");
+        console.warn("Navegador sin soporte Offline.");
     }
 }
 

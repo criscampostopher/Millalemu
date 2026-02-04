@@ -26,16 +26,22 @@ if (isset($_GET['msg'])) {
 // -----------------------------------------------------------------------
 // 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
 // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
+// -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
+// -----------------------------------------------------------------------
 $lista_mapas_visualizar = [];
 $zonas_disponibles = []; 
 $id_mapa_actual = isset($_GET['focus_map']) ? (int)$_GET['focus_map'] : 0;
 
 if ($es_admin) {
-    // A) Admin: Carga zonas para el select y TODOS los mapas
+    // A) Admin: Carga zonas y mapas (AGREGADO: m.tipo_mapa)
     $stmtZonas = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona ORDER BY nombre_zona ASC");
     $zonas_disponibles = $stmtZonas->fetchAll(PDO::FETCH_ASSOC);
 
-    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona 
+    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona 
             FROM public.mapa m
             LEFT JOIN public.zona z ON m.id_zona = z.id_zona
             ORDER BY z.nombre_zona ASC, m.categoria ASC, m.nombre_mapa ASC";
@@ -43,8 +49,8 @@ if ($es_admin) {
     $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 } else {
-    // B) Usuario: Carga solo lo asignado
-    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona
+    // B) Usuario: Carga asignados (AGREGADO: m.tipo_mapa)
+    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona
             FROM public.mapa m 
             JOIN public.usuario_mapa um ON m.id_mapa = um.id_mapa
             LEFT JOIN public.zona z ON m.id_zona = z.id_zona
@@ -57,6 +63,21 @@ if ($es_admin) {
     $stmt->execute([$id_usuario]);
     $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// C) CORRECCIÓN DE RUTAS (El Puente Mágico)
+foreach ($lista_mapas_visualizar as &$mapa) {
+    // 1. Si viene de BD, convertimos a API
+    if (strpos($mapa['ruta_archivo'], 'BD_STORED') !== false) {
+        $mapa['ruta_archivo'] = "Api/api_descargar_mapa.php?id=" . $mapa['id_mapa'];
+    } 
+    // 2. Si es archivo antiguo en uploads
+    elseif (!empty($mapa['ruta_archivo']) && !filter_var($mapa['ruta_archivo'], FILTER_VALIDATE_URL)) {
+        if (strpos($mapa['ruta_archivo'], 'uploads/') === false) {
+            $mapa['ruta_archivo'] = "uploads/" . $mapa['ruta_archivo'];
+        }
+    }
+}
+unset($mapa); // Limpieza
 ?>
 <!DOCTYPE html>
 <html lang="es">
