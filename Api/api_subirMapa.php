@@ -68,13 +68,41 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
 
         // 2. PROCESAMIENTO DEL ARCHIVO (EXTRACCIÓN DE CONTENIDO)
         // Aquí está el cambio: Leemos el contenido a una variable en lugar de moverlo a disco.
-        $nombre_original = $_FILES["mapa"]["name"];
+        // 2. PROCESAMIENTO Y VALIDACIÓN (Anti-Crash)
+        
+        // A) Verificar errores del servidor (Tamaño, Interrupción, etc.)
+        if ($_FILES['mapa']['error'] !== UPLOAD_ERR_OK) {
+            $msg = "Error al subir.";
+            switch ($_FILES['mapa']['error']) {
+                case UPLOAD_ERR_INI_SIZE:
+                case UPLOAD_ERR_FORM_SIZE:
+                    $msg = "El archivo es demasiado pesado para el servidor.";
+                    break;
+                case UPLOAD_ERR_PARTIAL:
+                    $msg = "La subida se cortó. Intente de nuevo.";
+                    break;
+                case UPLOAD_ERR_NO_FILE:
+                    $msg = "No se envió ningún archivo.";
+                    break;
+            }
+            // Redirigimos con el error amigable en vez de crashear
+            header("Location: ../index.php?status=error&msg=" . urlencode($msg)); 
+            exit;
+        }
+
+        // B) Validar ruta temporal
         $tmp_name = $_FILES["mapa"]["tmp_name"];
+        if (empty($tmp_name) || !is_uploaded_file($tmp_name)) {
+            header("Location: ../index.php?status=error&msg=Error crítico: El servidor rechazó el archivo."); 
+            exit;
+        }
+
+        $nombre_original = $_FILES["mapa"]["name"];
         $ext = strtolower(pathinfo($nombre_original, PATHINFO_EXTENSION));
         $nombre_mapa_limpio = pathinfo($nombre_original, PATHINFO_FILENAME);
         
         $tipo_mapa = "";
-        $contentForBD = null; // Variable clave: Aquí vivirá el mapa
+        $contentForBD = null;
 
         // Validación de nombre duplicado
         $check = $pdo->prepare("SELECT 1 FROM public.mapa WHERE nombre_mapa = ?");
@@ -107,6 +135,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
             $contentForBD = file_get_contents($tmp_name);
             $tipo_mapa = "KML";
         } elseif ($ext === 'geojson' || $ext === 'json') {
+
+        
             $contentForBD = file_get_contents($tmp_name);
             if (json_decode($contentForBD) === null) { header("Location: ../index.php?status=error&msg=GeoJSON inválido"); exit; }
             $tipo_mapa = "GeoJSON";
