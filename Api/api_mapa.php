@@ -123,14 +123,35 @@ try {
             break;
 
         // 6. RESET TOTAL
+        // 6. RESET TOTAL (ZONAS, MAPAS, ASIGNACIONES Y PELIGROS)
         case 'delete_all':
             if (!$es_admin) throw new Exception("Acceso denegado");
+            
+            // 1. Borrar archivos físicos de la carpeta uploads
             $files = glob(__DIR__ . '/../uploads/*'); 
             foreach($files as $file){ if(is_file($file)) unlink($file); }
-            $pdo->exec("TRUNCATE TABLE public.mapa RESTART IDENTITY CASCADE;");
-            $pdo->exec("INSERT INTO public.mapa (nombre_mapa, tipo_mapa, ruta_archivo) VALUES ('Capa General', 'Manual', 'manual')");
-            $pdo->exec("INSERT INTO public.usuario_mapa (id_usuario, id_mapa) VALUES (1, 1)"); 
-            echo json_encode(['success' => true]);
+
+            // 2. VACIADO TOTAL DE BASE DE DATOS
+            // TRUNCATE vacía las tablas y RESTART IDENTITY pone los IDs de nuevo en 1.
+            // CASCADE asegura que si algo depende de esto, también se borre.
+            $sql = "TRUNCATE TABLE 
+                        public.peligro, 
+                        public.usuario_zona, 
+                        public.mapa, 
+                        public.zona 
+                    RESTART IDENTITY CASCADE;";
+            
+            $pdo->exec($sql);
+
+            // 3. REGENERAR VALORES POR DEFECTO
+            // Creamos el mapa "Manual" base para que el visor no de error al inicio
+            // Nota: Lo dejamos sin zona (NULL) o podrías crear una "Zona General" si quisieras.
+            $pdo->exec("INSERT INTO public.mapa (nombre_mapa, tipo_mapa, ruta_archivo, id_zona) VALUES ('Capa General', 'Manual', 'manual', NULL)");
+            
+            // (Opcional) Si aún usas la tabla vieja usuario_mapa para el admin, descomenta esto:
+            // $pdo->exec("INSERT INTO public.usuario_mapa (id_usuario, id_mapa) VALUES (1, 1)"); 
+
+            echo json_encode(['success' => true, 'msg' => 'Sistema formateado correctamente.']);
             break;
 
         default:

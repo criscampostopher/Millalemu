@@ -308,22 +308,68 @@ function cargarCapaVisual(mapaDatos) {
         }).catch(e => console.error("Error KML:", e));
     } 
     
-    // --- GEOJSON (Procesamiento Inteligente) ---
+// --- GEOJSON (Procesamiento Inteligente) ---
     else if (extension === 'geojson' || extension === 'json') {
         fetch(ruta).then(r => r.json()).then(data => {
             const layer = L.geoJSON(data, {
-                style: function(feature) {
-                    let props = feature.properties;
-                    let rawFill = props.FILL_COLOR || props.Fill_Color || props.fill_color;
-                    let fillColorFinal = rawFill ? rgbToHex(rawFill) : null;
-                    let rawBorder = props.BORDER_COLOR || props.Border_Color || props.border_color;
-                    let borderColorFinal = rawBorder ? rgbToHex(rawBorder) : "#000000";
+                style: function (feature) {
+                    // ---------------------------------------------------------
+                    // 1. CORRECCIÓN DE VARIABLE (mapa -> mapaDatos)
+                    // ---------------------------------------------------------
+                    // AQUÍ ESTABA EL ERROR: Usábamos 'mapa' que no existía.
+                    var nombre = (mapaDatos.nombre_mapa || "").toLowerCase();
+                    var categoria = (mapaDatos.categoria || "").toLowerCase();
+                    
+                    var esPendiente = nombre.includes('pendiente') || categoria.includes('pendiente');
+                    var opacidadFinal = esPendiente ? 0.8 : 0.6; 
 
-                    if (!fillColorFinal) {
-                        fillColorFinal = "#E0A9E0"; // Default
-                        borderColorFinal = fillColorFinal;
+                    // ---------------------------------------------------------
+                    // 2. BUSCADOR DE PROPIEDADES
+                    // ---------------------------------------------------------
+                    var props = feature.properties || {};
+                    function getProp(clavesPosibles, valorDefecto) {
+                        var keys = Object.keys(props);
+                        for (var i = 0; i < keys.length; i++) {
+                            var keyReal = keys[i];
+                            var keyUpper = keyReal.toUpperCase();
+                            for (var j = 0; j < clavesPosibles.length; j++) {
+                                if (keyUpper === clavesPosibles[j]) return props[keyReal];
+                            }
+                        }
+                        return valorDefecto;
                     }
-                    return { fillColor: fillColorFinal, color: borderColorFinal, weight: 1, fillOpacity: 0.6 };
+
+                    // ---------------------------------------------------------
+                    // 3. EXTRACCIÓN DE ESTILOS
+                    // ---------------------------------------------------------
+                    var colorRelleno = getProp(['FILL_COLOR', 'FILL', 'COLOR'], null);
+                    var estiloRelleno = getProp(['FILL_STYLE', 'FILLSTYLE'], '');
+                    var colorBorde = getProp(['BORDER_COLOR', 'BORDER_C', 'STROKE', 'EDGE_COLOR'], '#3388ff');
+                    var anchoBorde = getProp(['BORDER_WIDTH', 'BORDER_W', 'WIDTH', 'STROKE-WIDTH'], 2);
+                    var estiloBorde = getProp(['BORDER_STYLE', 'STYLE'], '');
+
+                    if (estiloBorde && (estiloBorde.toString().toLowerCase() === 'null' || estiloBorde.toString().toLowerCase() === 'none')) {
+                        anchoBorde = 0;
+                    }
+
+                    // LÓGICA DE APAGADO DE RELLENO (ADIÓS MORADO)
+                    var activarRelleno = true;
+                    if (estiloRelleno && (estiloRelleno.toString().toLowerCase() === 'no fill' || estiloRelleno.toString().toLowerCase() === 'none')) {
+                        activarRelleno = false;
+                    }
+                    if (!colorRelleno) {
+                        activarRelleno = false;
+                    }
+
+                    return {
+                        fill: activarRelleno,
+                        fillColor: colorRelleno || '#ffffff',
+                        fillOpacity: activarRelleno ? opacidadFinal : 0, 
+                        color: colorBorde,
+                        weight: parseFloat(anchoBorde), 
+                        opacity: 1,
+                        dashArray: ''
+                    };
                 },
                 onEachFeature: (f, l) => {
                     let props = f.properties;
@@ -349,6 +395,41 @@ function cargarCapaVisual(mapaDatos) {
                 }
             });
             agregarCapaAlMapa(layer, id);
+            var nombre = (mapaDatos.nombre_mapa || "").toLowerCase();
+            var categoria = (mapaDatos.categoria || "").toLowerCase();
+            
+            var esPendiente = nombre.includes('pendiente') || categoria.includes('pendiente');
+            var esActa = nombre.includes('acta') || categoria.includes('acta');
+
+            // Etiquetamos la capa para que el sistema sepa quién es quién en el futuro
+            layer.esActa = esActa; 
+
+            setTimeout(function() { 
+                if (esPendiente) {
+                    // NIVEL 1 (FONDO): La pendiente se va atrás de todo
+                    layer.bringToBack();
+                } 
+                else if (esActa) {
+                    // NIVEL 3 (FRENTE): El Acta se trae adelante de todo
+                    layer.bringToFront();
+                } 
+                else {
+                    // NIVEL 2 (MEDIO): Uso de Suelo, Caminos, etc.
+                    // Primero lo traemos al frente (para que tape a la pendiente)
+                    layer.bringToFront();
+
+                    // TRUCO DE ORO:
+                    // Si acabamos de cargar un "Uso de Suelo", este tapará al "Acta" si ya estaba cargada.
+                    // Para evitar eso, buscamos si hay alguna Acta activa y la volvemos a poner encima.
+                    if (typeof capasActivas !== 'undefined') {
+                        Object.values(capasActivas).forEach(function(capaGuardada) {
+                            if (capaGuardada && capaGuardada.esActa === true) {
+                                capaGuardada.bringToFront(); // ¡Acta, recupera tu trono!
+                            }
+                        });
+                    }
+                }
+            }, 200);
         }).catch(e => console.error("Error GeoJSON:", e));
     }
 

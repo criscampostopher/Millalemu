@@ -3,10 +3,12 @@
 // Api/api_subirMapa.php (Versión BD - Lógica Intacta)
 // ==========================================================
 session_start();
+// --- AGREGAR ESTO ---
+ini_set('memory_limit', '1024M'); // 1GB de RAM para procesar mapas grandes
+set_time_limit(600);
+
 require_once __DIR__ . '/../Config/db_config.php';
 
-// Aumentamos memoria para procesar geometrías complejas
-ini_set('memory_limit', '512M');
 
 // --- TUS FUNCIONES DE DETECCIÓN (INTACTAS) ---
 function extraerRGB($str) {
@@ -167,11 +169,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
 
                 // A) CASO PENDIENTES: Fusión Topológica
                 if (stripos($categoria, 'Pendiente') !== false && isset($json['features'])) {
-                    $targetAlto = [[0,0,0], [168,0,0], [255,0,0], [52,52,52]]; 
-                    $targetMedio = [[255,85,0], [230,152,0]]; 
+                    $targetAlto = [[0,0,0], [168,0,0], [255,0,0], [52,52,52], [255,85,0]]; 
+                     
 
                     $geomsAlto = [];
-                    $geomsMedio = [];
+                
 
                     foreach ($json['features'] as $f) {
                         $props = $f['properties'] ?? [];
@@ -183,18 +185,31 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
                         }
                     }
 
+                   // Función optimizada para subir mapas gigantes sin estallar la memoria
                     $insertarFusion = function($geoms, $nombre, $nivel) use ($pdo, $nuevo_id_mapa, $id_usuario_actual) {
                         if (empty($geoms)) return;
-                        $col = ["type" => "GeometryCollection", "geometries" => $geoms];
-                        $sql = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
-                                SELECT ?, 'Pendiente Fusionada', 'poligono', ?, 'activa', ?, ?, 
-                                ST_Multi(ST_Union(d.geom)) 
-                                FROM (SELECT (ST_Dump(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)))).geom) AS d";
-                        $pdo->prepare($sql)->execute([$nombre, $nivel, $nuevo_id_mapa, $id_usuario_actual, json_encode($col)]);
+                        
+                        // Dividimos los polígonos en grupos de 1000 para no saturar la BD
+                        $lotes = array_chunk($geoms, 1000); 
+                        
+                        foreach ($lotes as $index => $lote) {
+                            $col = ["type" => "GeometryCollection", "geometries" => $lote];
+                            $jsonLote = json_encode($col);
+                            
+                            // Si es el primer lote, usamos el nombre original. Si hay más, agregamos sufijo (Parte 2, etc.)
+                            $nombreFinal = ($index === 0) ? $nombre : "$nombre (Parte " . ($index + 1) . ")";
+                            
+                            $sql = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
+                                    SELECT ?, 'Pendiente Fusionada', 'poligono', ?, 'activa', ?, ?, 
+                                    ST_Multi(ST_Union(d.geom)) 
+                                    FROM (SELECT (ST_Dump(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)))).geom) AS d";
+                                    
+                            $pdo->prepare($sql)->execute([$nombreFinal, $nivel, $nuevo_id_mapa, $id_usuario_actual, $jsonLote]);
+                        }
                     };
 
                     $insertarFusion($geomsAlto, "PENDIENTE CRÍTICA", "Critico");
-                    $insertarFusion($geomsMedio, "PENDIENTE MEDIA", "Alto");
+                    
                     $alertasDetectadas++;
                 }
 
