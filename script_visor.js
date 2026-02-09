@@ -55,8 +55,8 @@ crearPanelDiagnostico(); // <--- ¡AGREGA ESTA LÍNEA AQUÍ!
     });
 
     layerFondo = L.featureGroup().addTo(map);    
-    layerManuales = L.layerGroup().addTo(map);    // Alertas Generales (SOS, Agua, Veg, Actas)
-    layerPendientes = L.layerGroup().addTo(map);  // Solo Pendientes
+    layerManuales = L.layerGroup()   // Alertas Generales (SOS, Agua, Veg, Actas)
+    layerPendientes = L.layerGroup()  // Solo Pendientes
 
     // Agregamos los DOS checkboxes al menú de Leaflet
     L.control.layers(
@@ -102,6 +102,11 @@ function renderizarMenuCapas() {
     const zonas = {};
     if (typeof LISTA_MAPAS !== 'undefined' && Array.isArray(LISTA_MAPAS)) {
         LISTA_MAPAS.forEach(m => {
+            // --- CORRECCIÓN AQUÍ: FILTRO DE ZONA 0 ---
+            // Si la zona es 0 (Sistema/Oculta), saltamos este mapa y no lo mostramos en la lista
+            if (m.id_zona == 0 || m.id_zona == '0') return; 
+            // -----------------------------------------
+
             if (!zonas[m.id_zona]) { zonas[m.id_zona] = { nombre: m.nombre_zona || 'Zona General', mapas: [] }; }
             zonas[m.id_zona].mapas.push(m);
         });
@@ -267,6 +272,9 @@ function cargarCapaVisual(mapaDatos) {
     }
 
     console.log(`Cargando mapa ${id}: Tipo=${extension} Ruta=${ruta}`);
+
+
+    
     // --- KML (Estilos) ---
     if (extension === 'kml') {
         fetch(ruta).then(res => res.text()).then(kmlText => {
@@ -538,30 +546,51 @@ function asignarDatosComunes(layer, props, isAdmin) {
 
 // --- ACTUALIZAR VISIBILIDAD (MODIFICADO) ---
 function actualizarAlertasVisibles() {
-    // Limpiamos ambas capas visuales
+    // 1. Limpiamos el lienzo para redibujar según los filtros actuales
     layerManuales.clearLayers(); 
     layerPendientes.clearLayers(); 
 
     marcadoresPeligro.forEach(m => {
-        const idMapa = m.id_mapa_asociado;
+        // Obtenemos el ID del mapa (si es null o 0, asumimos 1 para manuales)
+        const idMapa = m.id_mapa_asociado || 1;
         
-        // Verificamos si la capa asociada está activa (o es el mapa general id=1)
+        // Verificamos si la capa asociada está activa en el menú
         if (capasActivas[idMapa] || idMapa == 1) {
             
-            // --- CAMBIO AQUÍ: CLASIFICACIÓN ---
-            // Si el nombre dice "PENDIENTE", va a la capa de Pendientes
-            // Si no, va a la capa Manuales (General)
+            // A) CASO PENDIENTES
             if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) {
-                if(m.addTo) m.addTo(layerPendientes); 
-                else layerPendientes.addLayer(m);
-            } else {
-                if(m.addTo) m.addTo(layerManuales); 
-                else {
-                    layerManuales.addLayer(m);
-                    // Si es un punto manual con radio, dibujamos el círculo también
-                    if (m.radio_custom > 0 && m.tipo_geom === 'Point') {
-                        L.circle(m.getLatLng(), { radius: m.radio_custom, color: '#e74c3c', fillColor: '#c0392b', fillOpacity: 0.3, weight: 1 }).addTo(layerManuales);
-                    }
+                layerPendientes.addLayer(m);
+            } 
+            // B) CASO ALERTAS MANUALES / NATIVO / AGUA
+            else {
+                // 1. Agregamos el PIN (Marcador)
+                layerManuales.addLayer(m);
+
+                // 2. DIBUJAMOS EL CÍRCULO (RADIO) SI TIENE
+                // Verificamos si es un punto y si tiene radio guardado
+                if (m.tipo_geom === 'Point' && m.radio_custom > 0) {
+                    
+                    // --- Recuperar Color según Nivel ---
+                    // Buscamos el nivel en las propiedades que guardamos en el marcador
+                    let nivel = (m.nivel || (m.feature && m.feature.properties && m.feature.properties.nivel) || "").toString().toLowerCase();
+                    let colorRadio = '#3388ff'; // Azul default
+
+                    if (nivel.includes('medio')) colorRadio = '#f1c40f';      // Amarillo
+                    else if (nivel.includes('alto')) colorRadio = '#e67e22';  // Naranja
+                    else if (nivel.includes('critico')) colorRadio = '#d63031'; // Rojo
+
+                    // Creamos el círculo
+                    const circulo = L.circle(m.getLatLng(), { 
+                        radius: m.radio_custom, 
+                        color: colorRadio, 
+                        fillColor: colorRadio, 
+                        fillOpacity: 0.2, 
+                        weight: 1,
+                        interactive: false // IMPORTANTE: Para que el clic pase al pin
+                    });
+
+                    // Lo agregamos a la misma capa que el pin
+                    layerManuales.addLayer(circulo);
                 }
             }
         }
@@ -603,30 +632,22 @@ function pointInRing(x, y, ring) {
 }
 
 
-// B) CHEQUEO GENERAL (BD) - CORREGIDO
 function checkPeligros(lat, lng) {
-    // 1. Si el botón GENERAL está apagado, NO hacemos nada.
     if (typeof IS_ADMIN !== 'undefined' && IS_ADMIN) return;
     if (!seguridadGeneralActiva) {
-        // Limpiamos alertas generales si se apaga el botón
-        const div = document.getElementById('alertas');
-        if (div && !div.innerHTML.includes("PENDIENTE")) div.style.display = 'none';
+        if (estadoAlertaActual > 0 && estadoAlertaActual < 3) cerrarAlertaMaestra();
         return;
     }
-    
-    // Si ya hay una pendiente sonando (prioridad), no mostramos alertas generales
-    if (pendienteActiva) return;
 
-    const divAlertas = document.getElementById('alertas'); 
-    let dangerDetected = false;
-    let htmlAlertas = "";
-    
-    marcadoresPeligro.forEach(m => {
-        // 2. FILTRO CLAVE: Si es Pendiente, LA IGNORAMOS (el otro botón se encarga)
-        if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) return;
+    // Nota: Eliminamos el "if (estadoAlertaActual === 3) return;" para permitir que detecte 
+    // vegetación aunque la pendiente esté silenciada (pero con menor prioridad visual).
+
+    let peligroDetectado = false;
+
+    for (let m of marcadoresPeligro) {
+        if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) continue;
 
         let isDanger = false;
-        
         if (m.tipo_geom === 'Point') {
             const distancia = map.distance([lat, lng], m.getLatLng());
             const radioAlerta = (m.radio_custom > 0) ? m.radio_custom : 15; 
@@ -639,128 +660,90 @@ function checkPeligros(lat, lng) {
             }
         }
 
-        if(isDanger) {
-            dangerDetected = true;
-            htmlAlertas += `<div class="alerta-card"><i class="fas fa-exclamation-triangle"></i><br>⚠️ ZONA DE PELIGRO<br><span style="font-size:0.9rem;">${m.nombre_alerta}</span></div>`;
-        }
-    });
+        if (isDanger) {
+            peligroDetectado = true;
+            let nombre = m.nombre_alerta.toUpperCase();
+            let titulo = "PRECAUCIÓN";
+            let color = "#f1c40f"; 
+            let nivel = 1;         
 
-    if (dangerDetected) {
-        divAlertas.innerHTML = htmlAlertas;
-        divAlertas.style.display = 'block';
-        
-        // SONIDO GENERAL
-        const now = Date.now();
-        if (now - lastSoundTime > 5000) { 
-            const audio = document.getElementById('alertaAudio');
-            if(audio) audio.play().catch(e => console.log("Falta click usuario"));
-            lastSoundTime = now; 
+            if (nombre.includes("NATIVO") || nombre.includes("VEGETACION")) {
+                titulo = "ZONA PROTEGIDA"; color = "#2ecc71"; 
+            } else if (nombre.includes("ACTA") || nombre.includes("FAENA")) {
+                titulo = "LÍMITE DE ACTA"; color = "#e67e22"; nivel = 2; 
+            } else if (nombre.includes("AGUA")) {
+                titulo = "PROTECCIÓN AGUA"; color = "#3498db"; 
+            }
+
+            mostrarAlertaMaestra(titulo, `Estás en: ${m.nombre_alerta}`, color, nivel, (m.id_db || m.id));
+            break; 
         }
-    } else {
-        // Solo ocultamos si no hay pendiente activa
-        if (!divAlertas.innerHTML.includes("PENDIENTE")) divAlertas.style.display = 'none';
+    }
+
+    // --- LÓGICA DE RESETEO SEGURA ---
+    if (!peligroDetectado) {
+        // Cerramos alerta visual si era de nivel bajo
+        if (estadoAlertaActual > 0 && estadoAlertaActual < 3) {
+            cerrarAlertaMaestra();
+        }
+
+        // SOLO SI NO HAY PENDIENTE ACTIVA Y NO HAY PELIGRO GENERAL...
+        // ENTENDEMOS QUE EL USUARIO ESTÁ EN ZONA SEGURA Y RESETEAMOS.
+        if (!pendienteActiva) {
+            idsSilenciados = []; 
+        }
     }
 }
 
-// C) CHEQUEO PENDIENTES (DIAGNÓSTICO SIN PAUSA)
 function checkPendientes(lat, lng) {
     if (typeof IS_ADMIN !== 'undefined' && IS_ADMIN) return;
-    
-    // --- DIAGNÓSTICO VISUAL (PANEL NEGRO) ---
-    let debugText = `GPS: ${lat.toFixed(5)}, ${lng.toFixed(5)}<br>`;
-    
     if (!seguridadPendienteActiva) {
-        if (pendienteActiva) detenerLoopAlerta();
+        if (pendienteActiva) cerrarAlertaMaestra();
         return;
     }
 
-    // 1. RECOLECCIÓN DE CANDIDATOS
     let candidatos = [];
     for (let m of marcadoresPeligro) {
         if (m.tipo_geom === 'Polygon' && m.nombre_alerta && m.nombre_alerta.toUpperCase().includes('PENDIENTE')) {
-            const anillos = scanCapasRecursivo(m);
+            const anillos = scanCapasRecursivo(m); 
             for (let anillo of anillos) {
                 if (isPointInRing(lat, lng, anillo)) {
                     let puntaje = m.nombre_alerta.toUpperCase().includes("CRÍTICA") ? 2 : 1;
-                    candidatos.push({ marcador: m, nivel: puntaje, id: m.id_db });
+                    // Usamos m.id_db como identificador único y estable
+                    candidatos.push({ marcador: m, nivel: puntaje, id: (m.id_db || m.id) });
                     break; 
                 }
             }
         }
     }
 
-    // Mostrar candidatos en el panel negro
-    debugText += `Candidatos: ${candidatos.length}<br>`;
-    candidatos.forEach(c => {
-        debugText += `➡ ID: ${c.id} | Nvl: ${c.nivel}<br>`;
-    });
-
-    // 2. ELECCIÓN DEL GANADOR
     let ganador = null;
     if (candidatos.length > 0) {
-        candidatos.sort((a, b) => {
-            // Prioridad 1: Nivel de Peligro (Crítica mata a Media)
-            if (b.nivel !== a.nivel) return b.nivel - a.nivel; 
-            
-            // Prioridad 2: Preferir el que NO está silenciado
-            const aSil = (idPoligonoSilenciado === a.marcador.id_db);
-            const bSil = (idPoligonoSilenciado === b.marcador.id_db);
-            if (aSil && !bSil) return 1; 
-            if (!aSil && bSil) return -1;
-            
-            return 0;
-        });
-        ganador = candidatos[0].marcador;
-        debugText += `🏆 GANADOR: ID ${ganador.id_db} (Nvl ${candidatos[0].nivel})<br>`;
-    } else {
-        debugText += `🏆 GANADOR: NINGUNO<br>`;
+        candidatos.sort((a, b) => b.nivel - a.nivel);
+        ganador = candidatos[0]; 
     }
 
-    // Actualizar el panel negro en pantalla
-    if(typeof actualizarDiagnostico === 'function') actualizarDiagnostico(debugText, "white");
-
-    // 3. GESTIÓN DE ESTADOS
     if (ganador) {
+        pendienteActiva = ganador.marcador;
+        const esCritica = ganador.marcador.nombre_alerta.toUpperCase().includes("CRÍTICA");
         
-        // DETECCIÓN DE CAMBIO DE ZONA (ID diferente)
-        // Esto se activa si pasas de Media a Crítica, o de Polígono A a Polígono B
-        if (!pendienteActiva || pendienteActiva.id_db !== ganador.id_db) {
-            
-            console.log(`CAMBIO: ${pendienteActiva ? pendienteActiva.id_db : 'NADA'} -> ${ganador.id_db}`);
-            
-            // Limpiamos el silencio porque es una zona nueva/distinta
-            idPoligonoSilenciado = null; 
-            
-            // Actualizamos la referencia actual
-            pendienteActiva = ganador;
-            
-            // FORZAMOS LA ACTUALIZACIÓN VISUAL INMEDIATA
-            const nivelTexto = pendienteActiva.nombre_alerta.toUpperCase().includes("CRÍTICA") ? "ALTO" : "MEDIO";
-            iniciarLoopAlerta(nivelTexto);
-            return;
-        }
-
-        // Si es el MISMO polígono de antes, revisamos si está silenciado
-        if (idPoligonoSilenciado === ganador.id_db) {
-            return; // Respetamos silencio
-        }
-
-        // Si no está silenciado y no está sonando (por algún error raro), lo encendemos
-        const divAlertas = document.getElementById('alertas');
-        if (divAlertas.style.display === 'none' || divAlertas.innerHTML === '') {
-            const nivelTexto = pendienteActiva.nombre_alerta.toUpperCase().includes("CRÍTICA") ? "ALTO" : "MEDIO";
-            iniciarLoopAlerta(nivelTexto);
-        }
-
+        mostrarAlertaMaestra(
+            esCritica ? "PELIGRO DE VUELCO" : "PENDIENTE MEDIA",
+            "Zona de Pendiente Detectada.",
+            esCritica ? "#d63031" : "#e67e22",
+            3,
+            ganador.id 
+        );
     } else {
-        // ZONA SEGURA
+        // ZONA SEGURA DE PENDIENTES
         if (pendienteActiva) {
-            detenerLoopAlerta();
             pendienteActiva = null;
-            idPoligonoSilenciado = null; // Olvidamos el silencio al salir
+            cerrarAlertaMaestra();
+            // Nota: No borramos la lista de silenciados aquí todavía
         }
     }
 }
+
 // Auxiliares para el escaneo (Agrégalas al final del archivo)
 function scanCapasRecursivo(layer) {
     let anillos = [];
@@ -883,10 +866,45 @@ window.toggleSeguridad = function(tipo) {
     }
 };
 
-window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 0) {
-    const data = { action: 'add_marker', lat: ll.lat, lng: ll.lng, nombre: nom, descripcion: desc, nivel: nivel, radio: radio, id_mapa: id_destino };
-    fetch('Api/api_mapa.php', { method:'POST', body:JSON.stringify(data) }).then(r=>r.json()).then(res=>{ if(res.success) { cargarDatosDeAlertas(); alert("Guardado."); } });
+window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 1) { // <--- CAMBIO AQUÍ (0 por 1)
+    const data = { 
+        action: 'add_marker', 
+        lat: ll.lat, 
+        lng: ll.lng, 
+        nombre: nom, 
+        descripcion: desc, 
+        nivel: nivel, 
+        radio: radio, 
+        id_mapa: id_destino 
+    };
+    
+    // Feedback visual opcional
+    const btn = document.querySelector('.btn-upload');
+    if(btn) btn.innerText = "Guardando...";
+
+    fetch('Api/api_mapa.php', { 
+        method:'POST', 
+        body:JSON.stringify(data) 
+    })
+    .then(r => r.json())
+    .then(res => { 
+        if(btn) btn.innerText = "Guardar"; // Restaurar botón
+        
+        if(res.success) { 
+            cargarDatosDeAlertas(); 
+            alert("✅ Guardado."); 
+        } else {
+            alert("❌ Error: " + (res.error || "Desconocido"));
+        }
+    })
+    .catch(err => {
+        if(btn) btn.innerText = "Guardar";
+        console.error(err);
+        alert("Error de conexión");
+    });
 };
+
+
 window.borrarMarcador = function(id) { if(confirm("¿Eliminar?")) fetch('Api/api_mapa.php', { method: 'POST', body: JSON.stringify({ action: 'delete_marker', id: id }) }).then(r=>r.json()).then(res=>{ if(res.success) cargarDatosDeAlertas(); }); };
 window.reportarUser = function() {
     const msg = prompt("⚠️ REPORTE SOS"); if(!msg) return;
@@ -905,32 +923,72 @@ window.iniciarRastreoGPS = function() {
 };
 window.centrarEnUsuario = function() { if(ultimaPosicion && map) map.setView(ultimaPosicion, 16, {animate: true}); };
 function setupUIEvents() {
-    const form = document.getElementById('markerFormContainer');
+    const formContainer = document.getElementById('markerFormContainer'); // El div que contiene el form
+    const form = document.getElementById('markerForm'); // El formulario dentro
     let currentLatLng;
-    document.getElementById('cancelMarker').onclick = () => { form.style.display='none'; document.getElementById('markerForm').reset(); };
+
+    // A. BOTÓN CANCELAR
+    const btnCancel = document.getElementById('cancelMarker');
+    if (btnCancel) {
+        btnCancel.onclick = () => { 
+            formContainer.style.display = 'none'; 
+            form.reset(); 
+        };
+    }
+
+    // B. CLIC DERECHO (ABRIR FORMULARIO)
     map.on('contextmenu', function(e) {
-        if (!IS_ADMIN) return; 
+        if (typeof IS_ADMIN !== 'undefined' && !IS_ADMIN) return; 
         currentLatLng = e.latlng;
+
+        // TRUCO: Como el HTML tiene un <select id="selectorMapaForm"> pero ya no usas esa lógica,
+        // lo llenamos con una opción falsa para que no se vea feo o vacío.
         const selector = document.getElementById('selectorMapaForm');
-        if(selector) {
-            selector.innerHTML = ''; 
-            if(typeof LISTA_MAPAS !== 'undefined') {
-                LISTA_MAPAS.forEach(m => {
-                    let opt = document.createElement('option'); opt.value = m.id_mapa; opt.text = `[${m.categoria}] ${m.nombre_mapa}`;
-                    if (m.id_mapa == 1) opt.selected = true; selector.appendChild(opt);
-                });
-            }
+        if (selector) {
+            selector.innerHTML = '<option value="1">Mapa General</option>';
         }
-        form.style.display = 'block';
+
+        formContainer.style.display = 'block'; // Mostrar el div contenedor
     });
-    document.getElementById('markerForm').onsubmit = (e) => {
+
+    // C. ENVIAR FORMULARIO (GUARDAR)
+    form.onsubmit = (e) => {
         e.preventDefault(); 
         if (!currentLatLng) return;
-        saveMarker(currentLatLng, document.getElementById('popupNombre').value, document.getElementById('popupDesc').value, document.getElementById('popupIcon').value, document.getElementById('popupRadio').value, document.getElementById('selectorMapaForm').value); 
-        form.style.display='none';
+
+        // AQUÍ ESTÁ LA CLAVE: Mapear tus IDs exactos del HTML
+        const nombre = document.getElementById('popupNombre').value;
+        const desc   = document.getElementById('popupDesc').value;
+        const nivel  = document.getElementById('popupIcon').value; // Tu HTML usa 'popupIcon' para el Nivel
+        const radio  = document.getElementById('popupRadio').value || 15;
+        
+        // Llamamos a saveMarker forzando el ID 1
+        saveMarker(
+            currentLatLng, 
+            nombre, 
+            desc, 
+            nivel, 
+            radio, 
+            1 // <--- Forzamos ID 1 porque ya no gestionas mapas/usuarios complejos
+        ); 
+        
+        formContainer.style.display = 'none';
+        form.reset();
     };
+
+    // D. BOTÓN BORRAR TODO
     const btnBorrar = document.getElementById('borrarMarcadores');
-    if(btnBorrar) btnBorrar.onclick = () => { if(confirm("¿RESETEAR TODO?")) fetch('Api/api_mapa.php?action=delete_all', { method: 'POST' }).then(() => { cargarDatosDeAlertas(); alert("Reset completo."); }); };
+    if(btnBorrar) {
+        btnBorrar.onclick = () => { 
+            if(confirm("¿RESETEAR TODO?")) { 
+                fetch('Api/api_mapa.php?action=delete_all', { method: 'POST' })
+                .then(r => r.json())
+                .then(res => { 
+                    if(res.success) { cargarDatosDeAlertas(); alert("Reset completo."); }
+                }); 
+            }
+        };
+    }
 }
 // --- FUNCIÓN DE DESCARGA OFFLINE "FULL PACK" ---
 window.descargarZona = function(idZona) {
@@ -1041,12 +1099,6 @@ function setupServiceWorkerListener() {
     }
 }
 
-
-
-
-
-
-
 // --- FUNCIONES DEL PANEL DE DIAGNÓSTICO ---
 function crearPanelDiagnostico() {
     // Si ya existe, no lo creamos de nuevo
@@ -1089,4 +1141,90 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 });
+
+
+
+
+
+
+
+// =============================================================================
+// SISTEMA VISUAL DE ALERTAS (CORREGIDO: ANTI-FLASH + MEMORIA MÚLTIPLE)
+// =============================================================================
+let estadoAlertaActual = 0; 
+let idAlertaEnPantalla = null; 
+let idsSilenciados = []; // Lista de alertas aceptadas
+let audioAlerta = new Audio('sounds/alert.mp3'); 
+audioAlerta.loop = true; 
+
+function mostrarAlertaMaestra(titulo, mensaje, color, nivel, idUnico) {
+    // 1. CHEQUEO DE SILENCIO: Si ya aceptaste esta alerta, no la mostramos.
+    if (idsSilenciados.includes(idUnico)) return;
+
+    // 2. ANTI-FLASH: Si ya estamos mostrando ESTA MISMA alerta y nivel, NO HACEMOS NADA.
+    // (Esto evita que parpadee o reinicie el audio cada segundo)
+    if (idAlertaEnPantalla === idUnico && estadoAlertaActual === nivel) return;
+
+    // 3. PRIORIDAD: Si hay una alerta más grave sonando, no la interrumpimos.
+    if (nivel < estadoAlertaActual && estadoAlertaActual > 0) return;
+
+    // Actualizamos estado
+    estadoAlertaActual = nivel;
+    idAlertaEnPantalla = idUnico; 
+
+    // 4. DIBUJAR INTERFAZ
+    let overlay = document.getElementById('alerta-maestra-overlay');
+    if (!overlay) {
+        crearModalAlertaHTML();
+        overlay = document.getElementById('alerta-maestra-overlay');
+    }
+
+    document.getElementById('alerta-maestra-card').style.borderTop = `15px solid ${color}`;
+    document.getElementById('alerta-maestra-titulo').innerText = titulo;
+    document.getElementById('alerta-maestra-titulo').style.color = color;
+    document.getElementById('alerta-maestra-mensaje').innerText = mensaje;
+    
+    let btn = document.getElementById('btn-maestra-confirmar');
+    btn.style.backgroundColor = color;
+    btn.innerText = (nivel === 3) ? "¡ENTENDIDO, SALIENDO!" : "ENTENDIDO";
+
+    overlay.style.display = 'flex';
+    
+    if (audioAlerta.paused) {
+        audioAlerta.currentTime = 0;
+        audioAlerta.play().catch(e => {});
+    }
+}
+
+function cerrarAlertaMaestra() {
+    let overlay = document.getElementById('alerta-maestra-overlay');
+    if (overlay) overlay.style.display = 'none';
+    audioAlerta.pause();
+    
+    // Al cerrar, agregamos el ID actual a la lista de silenciados
+    if (idAlertaEnPantalla && !idsSilenciados.includes(idAlertaEnPantalla)) {
+        idsSilenciados.push(idAlertaEnPantalla);
+    }
+    
+    estadoAlertaActual = 0; 
+    idAlertaEnPantalla = null;
+}
+
+function crearModalAlertaHTML() {
+    const html = `
+    <div id="alerta-maestra-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:99999; justify-content:center; align-items:center; flex-direction:column;">
+        <div id="alerta-maestra-card" style="background:white; width:90%; max-width:380px; padding:30px; border-radius:20px; text-align:center;">
+            <i class="fas fa-exclamation-triangle" style="font-size:4.5rem; margin-bottom:20px; color:#555;"></i>
+            <h1 id="alerta-maestra-titulo" style="margin:0; font-size:2.2rem; font-weight:900; text-transform:uppercase;">PELIGRO</h1>
+            <p id="alerta-maestra-mensaje" style="font-size:1.3rem; color:#444; margin:20px 0;">...</p>
+            <button id="btn-maestra-confirmar" onclick="cerrarAlertaMaestra()" style="width:100%; padding:15px; border:none; color:white; font-size:1.2rem; font-weight:bold; border-radius:12px; cursor:pointer;">ENTENDIDO</button>
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+}
+
+
+
+
+
 initMap();
