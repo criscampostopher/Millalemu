@@ -230,8 +230,8 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
                 <div class="form-group">
                     <label>Rol:</label>
                     <select id="userRol">
-                        <option value="usuario">Operador</option>
-                        <option value="admin">Supervisor</option>
+                        <option value="usuario">Trabajador</option>
+                        <option value="admin">Supervisor/jefe</option>
                     </select>
                 </div>
                 
@@ -283,26 +283,71 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
         function cerrarModal(id) { document.getElementById(id).style.display = 'none'; }
         
         // --- USUARIOS ---
-        function abrirModal() { 
-            isEditingUser=false; document.getElementById('modalTitle').innerText='Nuevo Usuario'; 
-            document.getElementById('userId').value=''; document.getElementById('userName').value=''; 
-            document.getElementById('userEmail').value=''; document.getElementById('userPass').value=''; 
-            document.getElementById('userModal').style.display='block'; 
-        }
-        function editar(id, nombre, email, rol) { 
-            isEditingUser=true; document.getElementById('modalTitle').innerText='Editar Usuario'; 
-            document.getElementById('userId').value=id; document.getElementById('userName').value=nombre; 
-            document.getElementById('userEmail').value = (email && email !== 'null') ? email : '';
-            document.getElementById('userRol').value=rol; document.getElementById('userPass').value=''; 
-            document.getElementById('userModal').style.display='block'; 
-        }
-        document.getElementById('userForm').onsubmit = (e) => { 
-            e.preventDefault(); 
-            const data={ action: isEditingUser?'update':'create', id:document.getElementById('userId').value, user:document.getElementById('userName').value, email:document.getElementById('userEmail').value, pass:document.getElementById('userPass').value, rol:document.getElementById('userRol').value };
-            enviarAPI(data); 
-        };
-        function eliminar(id) { if(confirm('¿Eliminar usuario?')) enviarAPI({action:'delete',id:id}); }
+       // --- FUNCIONES DE USUARIOS ---
 
+function abrirModal() { 
+    isEditingUser = false; 
+    document.getElementById('modalTitle').innerText = 'Nuevo Usuario'; 
+    document.getElementById('userId').value = ''; 
+    document.getElementById('userName').value = ''; 
+    document.getElementById('userEmail').value = ''; 
+    document.getElementById('userPass').value = ''; 
+    document.getElementById('userModal').style.display = 'block'; 
+}
+
+function editar(id, nombre, email, rol) { 
+    isEditingUser = true; 
+    document.getElementById('modalTitle').innerText = 'Editar Usuario'; 
+    document.getElementById('userId').value = id; 
+    document.getElementById('userName').value = nombre; 
+    document.getElementById('userEmail').value = (email && email !== 'null') ? email : '';
+    document.getElementById('userRol').value = rol; 
+    document.getElementById('userPass').value = ''; // La clave se deja vacía si no se va a cambiar
+    document.getElementById('userModal').style.display = 'block'; 
+}
+
+// CAMBIO CRÍTICO: Hacer la función async para esperar la respuesta
+document.getElementById('userForm').onsubmit = async (e) => { 
+    e.preventDefault(); 
+    
+    const action = isEditingUser ? 'update' : 'create';
+    const data = { 
+        action: action, 
+        id: document.getElementById('userId').value, 
+        user: document.getElementById('userName').value, 
+        email: document.getElementById('userEmail').value, 
+        pass: document.getElementById('userPass').value, 
+        rol: document.getElementById('userRol').value 
+    };
+
+    // Esperamos la respuesta de la API
+    const res = await enviarAPI(action, data); 
+
+    if (res.success) {
+        alert(isEditingUser ? "✅ Usuario actualizado con éxito" : "✅ Usuario creado con éxito");
+        cerrarModal(); // Asegúrate de tener esta función para ocultar el modal
+        location.reload(); // Recargamos para ver los cambios en la tabla
+    } else {
+        // Aquí es donde aparecerá "Usuario o Email ya existe" o cualquier error del PHP
+        alert("⚠️ Error: " + (res.error || "No se pudo procesar la solicitud"));
+    }
+};
+
+async function eliminar(id) { 
+    if (confirm('¿Está seguro de eliminar este usuario? Esta acción no se puede deshacer.')) {
+        const res = await enviarAPI('delete', { action: 'delete', id: id });
+        if (res.success) {
+            alert("✅ Usuario eliminado");
+            location.reload();
+        } else {
+            alert("⚠️ Error: " + res.error);
+        }
+    } 
+}
+
+function cerrarModal() {
+    document.getElementById('userModal').style.display = 'none';
+}
         // --- MAPAS ---
        function gestionarZonas(idUser, nombreUser) { 
         document.getElementById('assignUserId').value = idUser; 
@@ -368,6 +413,42 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
     window.onclick = function(e) { 
         if(e.target.className === 'modal') e.target.style.display='none'; 
     }
+
+
+
+
+    
+    // Función auxiliar para enviar datos a la API
+async function enviarAPI(action, data = {}) {
+    // Si el primer parámetro es un objeto, reasignamos los valores
+    if (typeof action === 'object') {
+        data = action;
+        action = data.action || '';
+    }
+
+    // Definimos a qué archivo apuntar según la acción
+    // Si la acción trata sobre zonas, apunta al mismo archivo, si no a la API
+    const url = (action.includes('zona') || action.includes('get_user_zonas')) 
+                ? 'usuarios.php' 
+                : 'Api/api_usuarios.php';
+    
+    // Aseguramos que la acción esté dentro del objeto de datos
+    data.action = action;
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        if (!response.ok) throw new Error('Error en la respuesta del servidor');
+        return await response.json();
+    } catch (error) {
+        console.error('Error en la petición:', error);
+        return { success: false, error: 'Error de comunicación con el servidor.' };
+    }
+}
 </script>
 </body>
 </html>

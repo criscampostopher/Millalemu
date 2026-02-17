@@ -40,7 +40,7 @@ const COLORES_MEDIO_RIESGO = [
 // --- 1. INICIALIZAR MAPA ---
 function initMap() {
 
-crearPanelDiagnostico(); // <--- ¡AGREGA ESTA LÍNEA AQUÍ!
+// crearPanelDiagnostico(); // <--- ¡AGREGA ESTA LÍNEA AQUÍ!
 
 
     map = L.map('map', { zoomControl: false }).setView([-35.4, -72.0], 9);
@@ -910,6 +910,8 @@ window.reportarUser = function() {
     const msg = prompt("⚠️ REPORTE SOS"); if(!msg) return;
     navigator.geolocation.getCurrentPosition(p => saveMarker({lat: p.coords.latitude, lng: p.coords.longitude}, "🚨 SOS", msg, "Critico", 20, 1), null, {enableHighAccuracy:true});
 };
+
+
 window.iniciarRastreoGPS = function() {
     if (!navigator.geolocation) return;
     watchId = navigator.geolocation.watchPosition(p => {
@@ -921,6 +923,7 @@ window.iniciarRastreoGPS = function() {
         else if(map) { accuracyCircle = L.circle([lat, lng], { radius: acc, color: '#3498db', fillOpacity: 0.15, weight: 1 }).addTo(map); }
     }, null, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
 };
+
 window.centrarEnUsuario = function() { if(ultimaPosicion && map) map.setView(ultimaPosicion, 16, {animate: true}); };
 function setupUIEvents() {
     const formContainer = document.getElementById('markerFormContainer'); // El div que contiene el form
@@ -1100,25 +1103,9 @@ function setupServiceWorkerListener() {
 }
 
 // --- FUNCIONES DEL PANEL DE DIAGNÓSTICO ---
-function crearPanelDiagnostico() {
-    // Si ya existe, no lo creamos de nuevo
-    if (document.getElementById('debug-panel')) return;
 
-    const div = document.createElement('div');
-    div.id = 'debug-panel';
-    // Estilos para asegurar que flote sobre el mapa (z-index alto)
-    div.style.cssText = "position:fixed; top:80px; left:10px; background:rgba(0,0,0,0.85); color:#00ff00; padding:12px; font-family:monospace; font-size:12px; z-index:9999; width:250px; border-radius:5px; pointer-events:none; line-height:1.4; border: 1px solid #333;";
-    div.innerHTML = "SISTEMA INICIADO<br>Esperando GPS...";
-    document.body.appendChild(div);
-}
+//*
 
-function actualizarDiagnostico(texto, color = "#00ff00") {
-    const p = document.getElementById('debug-panel');
-    if(p) { 
-        p.innerHTML = texto; 
-        p.style.color = color; 
-    }
-}
 // --- AUTO-ARRANQUE ---
 document.addEventListener('DOMContentLoaded', function() {
     // 1. Iniciar Service Worker
