@@ -1,43 +1,87 @@
 <?php
 // ==========================================================
-// Archivo: menuadmin.php
+// 1. CONFIGURACIÓN Y SESIÓN
 // ==========================================================
-session_start();
-header("Cache-Control: no-cache, no-store, must-revalidate");
-header("Pragma: no-cache");
-header("Expires: 0");
-
-require_once __DIR__ . '/Config/db_config.php'; 
-
-if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { 
-    header("Location: login.php"); 
-    exit; 
+require_once 'Config/db_config.php';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
-$nombre_user = $_SESSION['nombre_usuario'];
+// Verificar sesión
+if (!isset($_SESSION['id_usuario'])) {
+    header("Location: login.php");
+    exit;
+}
 
-// --- CONTADORES ---
+// Variables de usuario
+$id_usuario   = $_SESSION['id_usuario'];
+$tipo_usuario = $_SESSION['tipo_usuario'] ?? 'usuario';
+$nombre_user  = $_SESSION['nombre_usuario'] ?? 'Usuario';
+
+// ==========================================================
+// 2. LÓGICA DE DATOS (Consultas)
+// ==========================================================
+
+// --- A) ESTADÍSTICAS DEL DASHBOARD (Tu código original) ---
 $stats = ['u'=>0, 'm'=>0, 'p'=>0];
+$reportes = [];
+
 try {
+    // Contadores
     $stats['u'] = $pdo->query("SELECT COUNT(*) FROM public.usuario")->fetchColumn();
     $stats['m'] = $pdo->query("SELECT COUNT(*) FROM public.mapa")->fetchColumn();
-    
+    // Alertas de HOY
     $stats['p'] = $pdo->query("SELECT COUNT(*) FROM public.peligro WHERE estado = 'activa' AND fecha_creacion::date = CURRENT_DATE")->fetchColumn();
 
-    // --- FILTRO POR DIA ---
+    // Tabla de Reportes (Alertas) del día
     $sql_rep = "SELECT p.id, p.nombre, p.descripcion, p.nivel, p.radio_metros, p.fecha_creacion, 
                        m.nombre_mapa, u.nombre_usuario 
                 FROM public.peligro p 
                 LEFT JOIN public.mapa m ON p.id_mapa = m.id_mapa
                 LEFT JOIN public.usuario u ON p.id_usuario = u.id_usuario 
                 WHERE p.estado = 'activa'
-                AND p.fecha_creacion::date = CURRENT_DATE  -- SOLO HOY
+                AND p.fecha_creacion::date = CURRENT_DATE
                 ORDER BY p.fecha_creacion DESC"; 
-               
-                
     $reportes = $pdo->query($sql_rep)->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {}
+
+} catch (Exception $e) {
+    // Silencioso para no romper la UI si falla algo menor
+}
+
+// --- B) NUEVO: PIVs PENDIENTES DE FIRMA (Para todos) ---
+$mis_pendientes = [];
+try {
+    $sql_piv = "SELECT e.id_envio, p.id_piv, p.fecha, m.nombre_mapa, u.nombre_usuario as remitente, e.mensaje, e.estado
+                FROM piv_envio e
+                JOIN piv p ON e.id_piv = p.id_piv
+                LEFT JOIN mapa m ON p.id_mapa = m.id_mapa
+                JOIN usuario u ON e.de_usuario = u.id_usuario
+                WHERE e.para_usuario = :mi_id 
+                AND e.estado IN ('enviado', 'visto')
+                ORDER BY p.fecha DESC";
+    $stmt = $pdo->prepare($sql_piv);
+    $stmt->execute([':mi_id' => $id_usuario]);
+    $mis_pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    // error_log("Error cargando pendientes: " . $e->getMessage());
+}
+
+// --- C) NUEVO: MONITOR DE FIRMAS (Solo Admin) ---
+$monitor_pivs = [];
+if ($tipo_usuario === 'admin') {
+    try {
+        $sql_mon = "SELECT p.id_piv, m.nombre_mapa, u.nombre_usuario as destinatario, e.estado, e.observacion_firma,
+                    TO_CHAR(e.fecha_respuesta, 'DD-MM HH24:MI') as fecha_fmt
+                    FROM piv_envio e
+                    JOIN piv p ON e.id_piv = p.id_piv
+                    LEFT JOIN mapa m ON p.id_mapa = m.id_mapa
+                    JOIN usuario u ON e.para_usuario = u.id_usuario
+                    ORDER BY e.fecha_respuesta DESC NULLS LAST, p.id_piv DESC LIMIT 20";
+        $monitor_pivs = $pdo->query($sql_mon)->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {}
+}
 ?>
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -47,6 +91,36 @@ try {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="style-admin.css">
+    
+    <style>
+        .piv-alert-box { padding: 15px; border-radius: 8px; margin-bottom: 20px; font-weight: 500; }
+        .piv-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .piv-warn { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        
+        .piv-section { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-top: 25px; border-left: 5px solid #2e7d32; }
+        .piv-section h3 { margin-top: 0; color: #2e7d32; display: flex; align-items: center; gap: 10px; }
+        
+        .table-piv { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .table-piv th { text-align: left; padding: 12px; background: #f8fafc; color: #64748b; font-size: 0.9rem; }
+        .table-piv td { padding: 12px; border-bottom: 1px solid #e2e8f0; font-size: 0.95rem; }
+        
+        .btn-action { border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; color: white; font-weight: 600; font-size: 0.85rem; transition: 0.2s; margin-right: 5px; }
+        .btn-ok { background: #22c55e; }
+        .btn-ok:hover { background: #16a34a; }
+        .btn-no { background: #ef4444; }
+        .btn-no:hover { background: #dc2626; }
+        
+        .pill-st { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+        .st-aprobado { background: #dcfce7; color: #166534; }
+        .st-rechazado { background: #fee2e2; color: #991b1b; }
+        .st-pendiente { background: #f1f5f9; color: #475569; }
+
+
+
+        /* Agrega esto en tu <style> en menuadmin.php */
+.btn-pdf { background: #3498db; }
+.btn-pdf:hover { background: #2980b9; }
+    </style>
 </head>
 <body>
 
@@ -72,12 +146,21 @@ try {
     </aside>
 
     <main class="main">
+        
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <h1>Bienvenido, <?php echo htmlspecialchars($nombre_user); ?></h1>
             <span style="background:#2c3e50; color:white; padding:5px 12px; border-radius:15px; font-size:0.85rem; border:1px solid #fdd835;">
-                <i class="fas fa-shield-alt"></i> Supervisor
+                <i class="fas fa-shield-alt"></i> <?php echo ucfirst($tipo_usuario); ?>
             </span>
         </div>
+
+        <?php if (isset($_GET['msg'])): ?>
+            <?php if ($_GET['msg'] == 'firmado_ok'): ?>
+                <div class="piv-alert-box piv-success"><i class="fas fa-check-circle"></i> Documento firmado exitosamente.</div>
+            <?php elseif ($_GET['msg'] == 'observacion_guardada'): ?>
+                <div class="piv-alert-box piv-warn"><i class="fas fa-exclamation-circle"></i> La observación ha sido registrada.</div>
+            <?php endif; ?>
+        <?php endif; ?>
 
         <div class="cards">
             <div class="card">
@@ -94,14 +177,70 @@ try {
             </div>
         </div>
 
+        <?php if (count($mis_pendientes) > 0): ?>
+        <div class="piv-section">
+            <h3><i class="fas fa-file-signature"></i> Tienes documentos pendientes de firma</h3>
+            <div style="overflow-x:auto;">
+                <table class="table-piv">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Fecha</th>
+                            <th>Proyecto / Mapa</th>
+                            <th>Enviado por</th>
+                            <th>Mensaje</th>
+                            <th style="text-align:center;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($mis_pendientes as $row): ?>
+                        <tr>
+                            <td><strong>#<?php echo $row['id_piv']; ?></strong></td>
+                            <td><?php echo date('d/m/Y', strtotime($row['fecha'])); ?></td>
+                            <td style="color:#15803d; font-weight:600;"><?php echo htmlspecialchars($row['nombre_mapa']); ?></td>
+                            <td><?php echo htmlspecialchars($row['remitente']); ?></td>
+                            <td style="font-style:italic; color:#666;"><?php echo htmlspecialchars($row['mensaje']); ?></td>
+                            <td style="text-align:center; white-space: nowrap;">
+    <a href="piv_pdf_v2.php?id_piv=<?php echo $row['id_piv']; ?>" target="_blank" class="btn-action btn-pdf" title="Ver PDF">
+        <i class="fas fa-file-pdf"></i>
+    </a>
+
+    <form action="procesar_firma.php" method="POST" style="display:inline;">
+        <input type="hidden" name="id_envio" value="<?php echo $row['id_envio']; ?>">
+        <input type="hidden" name="id_piv" value="<?php echo $row['id_piv']; ?>">
+        <input type="hidden" name="accion" id="act_<?php echo $row['id_envio']; ?>">
+        <input type="hidden" name="observacion" id="obs_<?php echo $row['id_envio']; ?>">
+        
+        <button type="button" class="btn-action btn-ok" onclick="firmarPiv(<?php echo $row['id_envio']; ?>)" title="Aprobar / Firmar">
+            <i class="fas fa-check"></i>
+        </button>
+        <button type="button" class="btn-action btn-no" onclick="rechazarPiv(<?php echo $row['id_envio']; ?>)" title="Observar / Rechazar">
+            <i class="fas fa-times"></i>
+        </button>
+    </form>
+</td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <h2 style="color: #fdd835; font-size:1.3rem; margin-top:30px; margin-bottom:15px;">
             <i class="fas fa-bullhorn" style="color: #F54927;"></i> Reportes del Día (<?php echo date('d/m'); ?>)
         </h2>
         
-        <table>
-            <thead>
+        <table style="width:100%; border-collapse:collapse; background:rgba(255,255,255,0.9); border-radius:10px; overflow:hidden;">
+            <thead style="background:#2c3e50; color:white;">
                 <tr>
-                    <th>Reporte</th><th>Ubicación</th><th>Usuario</th><th>Nivel</th><th>Radio</th> <th>Fecha</th><th>Acción</th>
+                    <th style="padding:10px;">Reporte</th>
+                    <th style="padding:10px;">Ubicación</th>
+                    <th style="padding:10px;">Usuario</th>
+                    <th style="padding:10px;">Nivel</th>
+                    <th style="padding:10px;">Radio</th> 
+                    <th style="padding:10px;">Fecha</th>
+                    <th style="padding:10px;">Acción</th>
                 </tr>
             </thead>
             <tbody>
@@ -113,24 +252,24 @@ try {
                         elseif(strpos($nivel, 'alto') !== false) $color = '#e67e22';
                         elseif(strpos($nivel, 'medio') !== false) $color = '#27ae60';
                     ?>
-                    <tr>
-                        <td>
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:10px;">
                             <div style="font-weight:bold; color:#2c3e50;"><?php echo htmlspecialchars($r['nombre']); ?></div>
                             <small style="color:#666; font-style:italic;"><?php echo htmlspecialchars($r['descripcion']); ?></small>
                         </td>
-                        <td style="color:#2980b9; font-weight:600;"><i class="fas fa-layer-group"></i> <?php echo htmlspecialchars($r['nombre_mapa'] ?? 'Capa Manual'); ?></td>
-                        <td><?php echo htmlspecialchars($r['nombre_usuario']); ?></td>
-                        <td style="color:<?php echo $color; ?>; font-weight:bold; text-transform:capitalize;"><?php echo htmlspecialchars($r['nivel']); ?></td>
-                        <td>
+                        <td style="color:#2980b9; font-weight:600; padding:10px;"><i class="fas fa-layer-group"></i> <?php echo htmlspecialchars($r['nombre_mapa'] ?? 'Capa Manual'); ?></td>
+                        <td style="padding:10px;"><?php echo htmlspecialchars($r['nombre_usuario']); ?></td>
+                        <td style="color:<?php echo $color; ?>; font-weight:bold; text-transform:capitalize; padding:10px;"><?php echo htmlspecialchars($r['nivel']); ?></td>
+                        <td style="padding:10px;">
                             <?php if($r['radio_metros'] > 0): ?>
                                 <span style="background:#ffebee; color:#c0392b; padding:2px 6px; border-radius:4px; font-size:0.85rem; border:1px solid #ffcdd2;">
                                     <i class="fas fa-bullseye"></i> <?php echo $r['radio_metros']; ?>m
                                 </span>
                             <?php else: ?> <span style="color:#aaa;">-</span> <?php endif; ?>
                         </td>
-                        <td style="font-size:0.9rem; color:#555;"><?php echo date("H:i", strtotime($r['fecha_creacion'])); ?></td>
-                        <td>
-                            <button class="btn-del" onclick="resolver(<?php echo $r['id']; ?>)" title="Eliminar Alerta"><i class="fas fa-trash-alt"></i></button>
+                        <td style="font-size:0.9rem; color:#555; padding:10px;"><?php echo date("H:i", strtotime($r['fecha_creacion'])); ?></td>
+                        <td style="padding:10px;">
+                            <button class="btn-del" onclick="resolver(<?php echo $r['id']; ?>)" title="Eliminar Alerta" style="background:#e74c3c; color:white; border:none; padding:5px 8px; border-radius:4px; cursor:pointer;"><i class="fas fa-trash-alt"></i></button>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -139,17 +278,78 @@ try {
                 <?php endif; ?>
             </tbody>
         </table>
+
+        <?php if ($tipo_usuario === 'admin' && count($monitor_pivs) > 0): ?>
+        <div class="piv-section" style="border-left-color: #f59e0b;">
+            <h3 style="color:#f59e0b;"><i class="fas fa-tower-observation"></i> Monitor Global de Firmas (Últimos 20)</h3>
+            <div style="overflow-x:auto;">
+                <table class="table-piv">
+                    <thead>
+                        <tr>
+                            <th>PIV</th>
+                            <th>Mapa</th>
+                            <th>Destinatario</th>
+                            <th>Estado</th>
+                            <th>Fecha Respuesta</th>
+                            <th>Observación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($monitor_pivs as $mon): 
+                            $clase = 'st-pendiente';
+                            if($mon['estado'] == 'aprobado') $clase = 'st-aprobado';
+                            if($mon['estado'] == 'rechazado') $clase = 'st-rechazado';
+                        ?>
+                        <tr>
+                            <td>#<?php echo $mon['id_piv']; ?></td>
+                            <td><?php echo htmlspecialchars($mon['nombre_mapa']); ?></td>
+                            <td><?php echo htmlspecialchars($mon['destinatario']); ?></td>
+                            <td><span class="pill-st <?php echo $clase; ?>"><?php echo ucfirst($mon['estado']); ?></span></td>
+                            <td><?php echo $mon['fecha_fmt'] ? $mon['fecha_fmt'] : '-'; ?></td>
+                            <td style="color:#dc2626; font-size:0.85rem; font-style:italic;">
+                                <?php echo htmlspecialchars($mon['observacion_firma'] ?? ''); ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php endif; ?>
+
     </main>
 
     <script>
+        // Recargar página al volver atrás (para actualizar estados)
         window.addEventListener("pageshow", function(event){
             var historyTraversal = event.persisted || (typeof window.performance != "undefined" && window.performance.navigation.type === 2);
             if(historyTraversal){window.location.reload();}
         });
+
+        // Función original de alertas
         function resolver(id) {
             if(confirm("¿Borrar este reporte permanentemente?")) {
                 fetch('Api/api_mapa.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action:'delete_marker', id:id}) })
                 .then(r=>r.json()).then(res=>{ if(res.success) location.reload(); else alert("Error al borrar"); });
+            }
+        }
+
+        // Nuevas funciones para PIV
+        function firmarPiv(idEnvio) {
+            if(confirm("¿Confirma que ha revisado y aprueba este documento PIV?")) {
+                document.getElementById('act_' + idEnvio).value = 'aprobar';
+                document.getElementById('act_' + idEnvio).closest('form').submit();
+            }
+        }
+
+        function rechazarPiv(idEnvio) {
+            let motivo = prompt("Por favor, indique el motivo de la observación o rechazo:");
+            if(motivo && motivo.trim() !== "") {
+                document.getElementById('act_' + idEnvio).value = 'rechazar';
+                document.getElementById('obs_' + idEnvio).value = motivo;
+                document.getElementById('act_' + idEnvio).closest('form').submit();
+            } else if (motivo !== null) {
+                alert("Debe escribir un motivo para observar el documento.");
             }
         }
     </script>

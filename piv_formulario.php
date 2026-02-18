@@ -380,6 +380,44 @@ function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
                   <button type="button" class="btn-clear" data-clear="jornada" title="Limpiar"><i class="fas fa-eraser"></i></button>
                 </div>
               </div>
+              
+
+
+<div class="form-section">
+    <h3>4. Destinatarios del PIV (Firmas requeridas)</h3>
+    <div class="user-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+        <?php
+        // Conectar para obtener usuarios (reutilizando tu db_config que trae $pdo)
+        require_once 'Config/db_config.php';
+        
+        // Obtener mi ID para no enviarmelo a mi mismo (asumiendo que está en sesión)
+        $mi_id = $_SESSION['user_id'] ?? 0;
+
+        // SQL adaptado para PDO (usamos :id en lugar de $1)
+        $sql_users = "SELECT id_usuario, nombre_usuario, tipo_usuario FROM public.usuario WHERE id_usuario != :id ORDER BY nombre_usuario ASC";
+        
+        try {
+            // Preparar la consulta
+            $stmt = $pdo->prepare($sql_users);
+            
+            // Ejecutar pasando el parámetro
+            $stmt->execute([':id' => $mi_id]);
+
+            // Recorrer los resultados
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                echo '<div style="margin-bottom: 5px;">';
+                echo '<input type="checkbox" name="destinatarios[]" value="' . $row['id_usuario'] . '" id="user_' . $row['id_usuario'] . '">';
+                echo '<label for="user_' . $row['id_usuario'] . '" style="margin-left: 8px;">' . htmlspecialchars($row['nombre_usuario']) . ' (' . $row['tipo_usuario'] . ')</label>';
+                echo '</div>';
+            }
+        } catch (PDOException $e) {
+            echo "Error al cargar usuarios: " . $e->getMessage();
+        }
+        ?>
+    </div>
+    <small>Seleccione los usuarios que deben firmar este documento.</small>
+</div>
+<br>
 
               <div class="actions">
                 <button class="btn btn-warn" type="submit"><i class="fas fa-save"></i> Guardar/Actualizar ficha</button>
@@ -498,11 +536,19 @@ function setActive(step){
 function nextStep(step){ setActive(step); }
 
 function guardarPIV(){
+  // 1. Validar que marcó el check de confirmación
   if(!document.getElementById('declaro').checked){
     alert("Debes marcar la declaración de conocimiento.");
     return;
   }
 
+  // 2. Recolectar los destinatarios seleccionados (ESTO FALTABA)
+  const destinatariosSeleccionados = [];
+  document.querySelectorAll('input[name="destinatarios[]"]:checked').forEach((checkbox) => {
+      destinatariosSeleccionados.push(checkbox.value);
+  });
+
+  // 3. Juntar las consideraciones
   const consideraciones = [
     document.getElementById('consideracion_1').value,
     document.getElementById('consideracion_2').value,
@@ -510,17 +556,21 @@ function guardarPIV(){
     document.getElementById('consideracion_4').value
   ].map(v => v.trim()).filter(Boolean).join('\n');
 
+  // 4. Crear el objeto de datos a enviar
   const payload = {
+    // Datos básicos (esto ya estaba bien)
     id_mapa: <?php echo $mapa ? (int)$mapa['id_mapa'] : 0; ?>,
     fecha: document.getElementById('fecha').value,
-
     consideraciones: consideraciones,
     observaciones: document.getElementById('obs').value,
-
     firma_cargo: document.getElementById('firma_cargo').value,
-    firma_nombre: document.getElementById('firma_nombre').value
+    firma_nombre: document.getElementById('firma_nombre').value,
+    
+    // Agregamos la lista de destinatarios al JSON
+    destinatarios: destinatariosSeleccionados
   };
 
+  // 5. Enviar al servidor
   fetch('piv_guardar.php', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
@@ -529,23 +579,29 @@ function guardarPIV(){
   .then(r=>r.json())
   .then(res=>{
     if(res.success){
-      alert("✅ PIV guardado correctamente.");
+      alert("✅ PIV guardado correctamente y notificaciones enviadas.");
       const idPiv = Number(res.id_piv || 0);
+      
       if (!idPiv) {
-        alert("Se guardó, pero no llegó id_piv para descarga PDF.");
-        return;
+        // Si se guardó pero no devolvió ID, avisamos pero no bloqueamos
+        console.warn("Se guardó, pero no llegó id_piv para descarga PDF.");
+      } else {
+        ultimoIdPiv = idPiv;
+        // Configurar botones de PDF
+        const pdf = 'piv_pdf_v2.php?id_piv=' + idPiv;
+        const pdfDebug = pdf + '&debug=1';
+        document.getElementById('btnPdf').href = pdf;
+        document.getElementById('btnPdfDebug').href = pdfDebug;
+        document.getElementById('pdfActions').classList.remove('hidden');
       }
-      ultimoIdPiv = idPiv;
-      const pdf = 'piv_pdf_v2.php?id_piv=' + idPiv;
-      const pdfDebug = pdf + '&debug=1';
-      document.getElementById('btnPdf').href = pdf;
-      document.getElementById('btnPdfDebug').href = pdfDebug;
-      document.getElementById('pdfActions').classList.remove('hidden');
     } else {
       alert("Error: " + (res.error || 'No se pudo guardar'));
     }
   })
-  .catch(()=>alert("Error de red al guardar PIV."));
+  .catch((err)=>{
+    console.error(err);
+    alert("Error de red al guardar PIV.");
+  });
 }
 
 function limpiarFormulario() {
