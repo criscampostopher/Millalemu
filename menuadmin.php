@@ -62,6 +62,10 @@ try {
         <a href="index.php"><i class="fas fa-eye"></i> <b>Visor Global</b></a>
         <a href="mapas.php"><i class="fas fa-layer-group"></i> Gestión de Mapas</a>
         <a href="usuarios.php"><i class="fas fa-users"></i> Usuarios</a>
+        <a href="piv_formulario.php" class="piv-btn">
+            <i class="fas fa-clipboard-list"></i>
+            PIV Formulario
+        </a>
         <div style="margin-top:auto; padding-bottom:20px;">
             <a href="logout.php" style="color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Salir</a>
         </div>

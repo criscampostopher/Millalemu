@@ -1,14 +1,40 @@
 /* ==========================================================
-  Lógica del Visor: Mapas, GPS, Alertas y Colores KML (v7 Final)
+  Lógica del Visor: Mapas, GPS, Alertas Inteligentes (v9.0)
+  - Soporte Real para MultiPolygons complejos (Aplanamiento)
+  - Paleta de Colores Exacta (Negro, Gris, Rojos, Naranjas)
+  - Escudos Invisibles y Offline
    ========================================================== */
 
 let map, userMarker, accuracyCircle, watchId;
 let layerFondo, layerManuales;
 let marcadoresPeligro = []; 
 let capasActivas = {}; 
-let alertasSilenciadas = false;
 let ultimaPosicion = null;
 let lastSoundTime = 0; 
+
+// --- VARIABLES DE SEGURIDAD ---
+let seguridadGeneralActiva = true;
+let seguridadPendienteActiva = true;
+
+// --- VARIABLES PENDIENTES ---
+var poligonosPendiente = []; 
+let pendienteActiva = null;
+let timerAlerta = null;
+let timerEspera = null;
+let asistidoConfirmado = false;
+
+// --- PALETA DE COLORES DE RIESGO (Normalizados) ---
+const COLORES_ALTO_RIESGO = [
+    "RGB(0,0,0)",    // Negro intenso
+    "RGB(168,0,0)",  // Rojo intenso
+    "RGB(255,0,0)",  // Rojo claro
+    "RGB(52,52,52)"  // Gris
+];
+
+const COLORES_MEDIO_RIESGO = [
+    "RGB(255,85,0)", // Naranja
+    "RGB(230,152,0)" // Naranjo claro
+];
 
 // --- 1. INICIALIZAR MAPA ---
 function initMap() {
@@ -16,18 +42,25 @@ function initMap() {
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     const satelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
-        attribution: 'Tiles &copy; Esri', 
-        maxZoom: 19 
+        attribution: 'Tiles &copy; Esri', maxZoom: 19 
     }).addTo(map);
     
     const calles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
-        attribution: '&copy; OpenStreetMap', 
-        maxZoom: 19 
+        attribution: '&copy; OpenStreetMap', maxZoom: 19 
     });
 
     layerFondo = L.featureGroup().addTo(map);    
-    layerManuales = L.layerGroup().addTo(map);   
-    L.control.layers({ "Satélite": satelite, "Mapa": calles }, { "Alertas": layerManuales }).addTo(map);
+    layerManuales = L.layerGroup().addTo(map);    // Alertas Generales (SOS, Agua, Veg, Actas)
+    layerPendientes = L.layerGroup().addTo(map);  // Solo Pendientes
+
+    // Agregamos los DOS checkboxes al menú de Leaflet
+    L.control.layers(
+        { "Satélite": satelite, "Mapa": calles }, 
+        { 
+            "Alertas Generales": layerManuales,  // Checkbox 1
+            "Alertas Pendientes": layerPendientes // Checkbox 2
+        }
+    ).addTo(map);
 
     renderizarMenuCapas();
     cargarDatosDeAlertas(); 
@@ -40,7 +73,19 @@ function initMap() {
         if (capaGeneral) cargarCapaVisual(capaGeneral);
     }
 
-    setInterval(() => { if(ultimaPosicion) checkPeligros(ultimaPosicion[0], ultimaPosicion[1]); }, 1000); 
+    // --- BUCLE DE SEGURIDAD (1s) ---
+    setInterval(() => { 
+        if(ultimaPosicion) {
+            // Escudo 1: General
+            if (seguridadGeneralActiva) checkPeligros(ultimaPosicion[0], ultimaPosicion[1]);
+            else {
+                const div = document.getElementById('alertas');
+                if(div && !pendienteActiva) div.style.display = 'none';
+            }
+            // Escudo 2: Pendientes
+            if (seguridadPendienteActiva) checkPendientes(ultimaPosicion[0], ultimaPosicion[1]);
+        } 
+    }, 1000); 
 }
 
 // --- 2. RENDERIZADOR DE MENÚ ---
@@ -70,12 +115,12 @@ function renderizarMenuCapas() {
         divZona.innerHTML = `
             <div class="zone-header ${activeClass}" onclick="toggleZona('${idZona}')">
                 <div style="display:flex; align-items:center;">
-                    <i id="chevron-${idZona}" class="fas ${chevronClass} zone-chevron"></i>
+                    <i id="chevron-${idZona}" class="fas ${chevronClass}" style="margin-right:10px; font-size:0.8rem;"></i>
                     <b>${zona.nombre}</b>
                 </div>
                 <div class="zone-actions" onclick="event.stopPropagation()">
                     <span id="offline-badge-${idZona}" class="offline-badge"></span>
-                    <button class="btn-download" onclick="descargarZona(${idZona})" title="Descargar">
+                    <button class="btn-download" onclick="descargarZona(${idZona})" title="Descargar Offline" style="background:none; border:none; color:#3498db; cursor:pointer;">
                         <i class="fas fa-download"></i>
                     </button>
                 </div>
@@ -123,15 +168,26 @@ window.toggleZona = function(idZona) {
     }
 };
 
-// --- 3. GESTIÓN VISUAL Y COLORES KML (CORREGIDO) ---
+// --- 3. GESTIÓN VISUAL Y COLORES ---
+
+function rgbToHex(rgbStr) {
+    if (!rgbStr) return null;
+    const match = rgbStr.match(/\d+/g);
+    if (!match || match.length < 3) return rgbStr; 
+    const r = parseInt(match[0]), g = parseInt(match[1]), b = parseInt(match[2]);
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+}
+
+function normalizarColor(color) {
+    if(!color) return "";
+    return color.replace(/\s/g, '').toUpperCase(); 
+}
 
 function gestionarCapa(input, mapaDatos, groupName) {
     if (input.checked) {
         if (input.type === 'radio') {
             document.querySelectorAll(`input[name="${groupName}"]`).forEach(sibling => { 
-                if (sibling !== input && sibling.value) {
-                    removerCapaVisual(sibling.value); 
-                }
+                if (sibling !== input && sibling.value) removerCapaVisual(sibling.value); 
             });
         }
         cargarCapaVisual(mapaDatos);
@@ -140,126 +196,149 @@ function gestionarCapa(input, mapaDatos, groupName) {
     }
 }
 
+function removerCapaVisual(id) {
+    if (capasActivas[id]) {
+        if (capasActivas[id].type !== 'logic_only') {
+            try { layerFondo.removeLayer(capasActivas[id]); } catch(e) {}
+        }
+        delete capasActivas[id];
+        if (typeof actualizarAlertasVisibles === 'function') actualizarAlertasVisibles();
+        // NOTA: No borramos poligonosPendiente para mantener los "Escudos Invisibles"
+    }
+}
+
+// --- FUNCIÓN AUXILIAR: APLANAR GEOMETRÍA ---
+// Convierte MultiPolygons complejos en una lista plana de polígonos simples
+function aplanarGeometria(geometry) {
+    let listaPoligonos = [];
+    
+    if (geometry.type === 'Polygon') {
+        listaPoligonos.push(geometry.coordinates);
+    } 
+    else if (geometry.type === 'MultiPolygon') {
+        // MultiPolygon es un array de Polygons. Los extraemos uno a uno.
+        geometry.coordinates.forEach(polyCoords => {
+            listaPoligonos.push(polyCoords);
+        });
+    }
+    
+    return listaPoligonos;
+}
+
 function cargarCapaVisual(mapaDatos) {
     const id = mapaDatos.id_mapa;
     if (capasActivas[id]) return; 
 
-    if (mapaDatos.ruta_archivo === 'manual' || !mapaDatos.ruta_archivo) {
+    const ruta = mapaDatos.ruta_archivo;
+    if (!ruta || ruta === 'manual') {
         capasActivas[id] = { type: 'logic_only' };
-        actualizarAlertasVisibles();
+        if (typeof actualizarAlertasVisibles === 'function') actualizarAlertasVisibles();
         return; 
     }
 
-    const ruta = mapaDatos.ruta_archivo;
+    const extension = ruta.split('.').pop().toLowerCase();
     
-    // --- LÓGICA KML (EXTRAER COLORES) ---
-    if (ruta.toLowerCase().endsWith('.kml')) {
-        fetch(ruta)
-            .then(res => res.text())
-            .then(kmlText => {
-                // 1. DICCIONARIO DE ESTILOS MANUAL (Regex)
-                const styles = {};
-                const regexStyle = /<Style[\s\S]*?id=["']([^"']+)["'][\s\S]*?<color>([0-9A-Fa-f]{8})<\/color>/gi;
-                let match;
-                
-                while ((match = regexStyle.exec(kmlText)) !== null) {
-                    const styleId = match[1];     
-                    const kmlColor = match[2];    
-                    
-                    let hex = '#FF5722';
-                    if (kmlColor.length === 8) {
-                        const bb = kmlColor.substr(2, 2);
-                        const gg = kmlColor.substr(4, 2);
-                        const rr = kmlColor.substr(6, 2);
-                        hex = `#${rr}${gg}${bb}`;
-                    }
-                    styles['#' + styleId] = hex;
-                    styles[styleId] = hex;
+    // --- KML (Estilos) ---
+    if (extension === 'kml') {
+        fetch(ruta).then(res => res.text()).then(kmlText => {
+            const styles = {};
+            const regexStyle = /<Style[\s\S]*?id=["']([^"']+)["'][\s\S]*?<PolyStyle[\s\S]*?<color>([0-9A-Fa-f]{8})<\/color>/gi;
+            let match;
+            while ((match = regexStyle.exec(kmlText)) !== null) {
+                const styleId = match[1]; const kmlColor = match[2];    
+                let hex = '#E0A9E0'; 
+                if (kmlColor.length === 8) {
+                    const bb = kmlColor.substr(2, 2), gg = kmlColor.substr(4, 2), rr = kmlColor.substr(6, 2);
+                    hex = `#${rr}${gg}${bb}`;
                 }
+                styles[styleId] = hex; styles['#'+styleId] = hex;
+            }
 
-                // 2. PARSEAR KML
-                // NOTA: 'omnivore.kml.parse' es síncrono. Devuelve el layer listo.
-                const layer = omnivore.kml.parse(kmlText, null, L.geoJSON(null, {
-                    style: feature => {
-                        const cat = (mapaDatos.categoria || '').trim().toLowerCase();
-                        
-                        // SI ES PENDIENTE: Usar colores originales + Transparencia
-                        if (cat === 'pendiente') {
-                            let colorFinal = '#FF5722'; 
-
-                            if (feature.properties.styleUrl && styles[feature.properties.styleUrl]) {
-                                colorFinal = styles[feature.properties.styleUrl];
-                            }
-                            else if (feature.properties.fill) {
-                                let c = feature.properties.fill;
-                                if (c.length === 8 && !c.startsWith('#')) {
-                                     const bb = c.substr(2, 2);
-                                     const gg = c.substr(4, 2);
-                                     const rr = c.substr(6, 2);
-                                     colorFinal = `#${rr}${gg}${bb}`;
-                                } else {
-                                    colorFinal = c;
-                                }
-                            }
-                            return { fillColor: colorFinal, color: colorFinal, weight: 1, fillOpacity: 0.5 };
-                        }
-                        
-                        // OTROS MAPAS (Morado)
-                        if (feature.geometry.type.includes('Polygon')) {
-                            return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
-                        }
-                        return { color: '#FF0000', weight: 2 };
-                    },
-                    onEachFeature: (f, l) => {
-                        let contenido = "<b>" + mapaDatos.categoria + ":</b> " + mapaDatos.nombre_mapa;
-                        if(f.properties.description) contenido += "<br>" + f.properties.description;
-                        l.bindPopup(contenido);
+            const layer = omnivore.kml.parse(kmlText, null, L.geoJSON(null, {
+                style: feature => {
+                    let colorFinal = styles[feature.properties.styleUrl] || feature.properties.fill || '#E0A9E0';
+                    return { fillColor: colorFinal, color: colorFinal, weight: 1, fillOpacity: 0.6 };
+                },
+                onEachFeature: (f, l) => {
+                    if (mapaDatos.categoria.toLowerCase().includes('pendiente')) {
+                        // KML es más complejo de aplanar, asumimos simple por ahora
+                        // (KMLs exportados de GlobalMapper suelen ser Polygons simples)
+                        let rawGeoms = aplanarGeometria(f.geometry);
+                        rawGeoms.forEach(coords => {
+                            poligonosPendiente.push({ 
+                                id: Math.random().toString(36).substr(2, 9),
+                                coords: coords, 
+                                colorRaw: 'KML_GENERIC' // Difícil extraer color raw de KML en JS puro
+                            });
+                        });
                     }
-                }));
-
-                // 3. AGREGAR AL MAPA (SIN ESPERAR EVENTO 'READY')
-                layerFondo.addLayer(layer); 
-                if(!ultimaPosicion) map.fitBounds(layer.getBounds()); 
-                
-                capasActivas[id] = layer;
-                actualizarAlertasVisibles();
-            })
-            .catch(e => console.error("Error KML:", e));
-
-    } else {
-        // --- LÓGICA GEOJSON ---
+                    l.bindPopup(`<b>${mapaDatos.nombre_mapa}</b>`);
+                }
+            }));
+            agregarCapaAlMapa(layer, id);
+        }).catch(e => console.error("Error KML:", e));
+    } 
+    
+    // --- GEOJSON (Procesamiento Inteligente) ---
+    else if (extension === 'geojson' || extension === 'json') {
         fetch(ruta).then(r => r.json()).then(data => {
             const layer = L.geoJSON(data, {
-                style: feature => {
-                    const cat = (mapaDatos.categoria || '').trim().toLowerCase();
-                    if (cat === 'pendiente') {
-                         const color = feature.properties.fill || '#FF5722';
-                         return { fillColor: color, color: color, weight: 1, fillOpacity: 0.5 };
+                style: function(feature) {
+                    let props = feature.properties;
+                    let rawFill = props.FILL_COLOR || props.Fill_Color || props.fill_color;
+                    let fillColorFinal = rawFill ? rgbToHex(rawFill) : null;
+                    let rawBorder = props.BORDER_COLOR || props.Border_Color || props.border_color;
+                    let borderColorFinal = rawBorder ? rgbToHex(rawBorder) : "#000000";
+
+                    if (!fillColorFinal) {
+                        fillColorFinal = "#E0A9E0"; // Default
+                        borderColorFinal = fillColorFinal;
                     }
-                    if (feature.geometry.type.includes('Polygon')) return { fillColor: '#E0A9E0', color: '#800080', weight: 2, fillOpacity: 0.5 };
-                    return { color: '#FF0000', weight: 2 };
+                    return { fillColor: fillColorFinal, color: borderColorFinal, weight: 1, fillOpacity: 0.6 };
                 },
-                onEachFeature: (f, l) => { 
-                    l.bindPopup("<b>" + mapaDatos.categoria + ":</b> " + mapaDatos.nombre_mapa); 
+                onEachFeature: (f, l) => {
+                    let props = f.properties;
+                    l.bindPopup(`<b>${mapaDatos.nombre_mapa}</b><br>Glosa: ${props.GLOSALEGAD || ''}`);
+
+                    // LÓGICA SEGURIDAD PENDIENTES
+                    if (mapaDatos.categoria.toLowerCase().includes('pendiente')) {
+                        let colorStr = props.FILL_COLOR || props.Fill_Color || props.fill_color;
+                        let colorNormalizado = normalizarColor(colorStr);
+                        
+                        // APLANAMOS LA GEOMETRÍA
+                        // Esto convierte 1 Feature MultiPolygon en N polígonos simples
+                        let listaCoords = aplanarGeometria(f.geometry);
+                        
+                        listaCoords.forEach(coords => {
+                            poligonosPendiente.push({
+                                id: Math.random().toString(36).substr(2, 9),
+                                coords: coords, // Coordenadas [ [long, lat], [long, lat]... ]
+                                colorRaw: colorNormalizado
+                            });
+                        });
+                    }
                 }
             });
-            layerFondo.addLayer(layer);
-            if(!ultimaPosicion) map.fitBounds(layer.getBounds());
-            capasActivas[id] = layer;
-            actualizarAlertasVisibles();
-        }).catch(e => console.error(e));
+            agregarCapaAlMapa(layer, id);
+        }).catch(e => console.error("Error GeoJSON:", e));
+    }
+
+    else if (extension === 'kmz') {
+        const layer = omnivore.kml(ruta, null, L.geoJSON(null, {
+             style: { color: '#E0A9E0', fillColor: '#E0A9E0', fillOpacity: 0.5 },
+             onEachFeature: (f, l) => { l.bindPopup(`<b>${mapaDatos.nombre_mapa}</b>`); }
+        })).on('ready', function() { agregarCapaAlMapa(layer, id); });
     }
 }
 
-function removerCapaVisual(id) {
-    if (capasActivas[id]) {
-        if (capasActivas[id].type !== 'logic_only') layerFondo.removeLayer(capasActivas[id]);
-        delete capasActivas[id];
-        actualizarAlertasVisibles();
-    }
+function agregarCapaAlMapa(layer, id) {
+    layerFondo.addLayer(layer);
+    if (!ultimaPosicion) try { map.fitBounds(layer.getBounds()); } catch(e){}
+    capasActivas[id] = layer;
+    if (typeof actualizarAlertasVisibles === 'function') actualizarAlertasVisibles();
 }
 
-// --- 4. GESTIÓN DE ALERTAS ---
+// --- 4. GESTIÓN DE ALERTAS (BD) ---
 function cargarDatosDeAlertas() {
     fetch('Api/api_mapa.php?action=fetch_markers').then(r => r.json()).then(res => {
         if (res.success && res.markers) {
@@ -281,14 +360,7 @@ function cargarDatosDeAlertas() {
                         marcadoresPeligro.push(m);
                     } 
                     else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
-                        const m = L.geoJSON(geom, {
-                            style: { 
-                                color: '#FF5722',  
-                                weight: 5,         
-                                fillOpacity: 0.2,  
-                                dashArray: '10, 10' 
-                            }
-                        });
+                        const m = L.geoJSON(geom, { style: { color: '#FF5722', weight: 5, fillOpacity: 0.2, dashArray: '10, 10' } });
                         m.tipo_geom = 'Polygon';
                         m.eachLayer(l => asignarDatosComunes(l, props, isAdmin));
                         m.id_mapa_asociado = props.id_mapa;
@@ -313,107 +385,315 @@ function asignarDatosComunes(layer, props, isAdmin) {
     layer.bindPopup(html);
 }
 
+// --- ACTUALIZAR VISIBILIDAD (MODIFICADO) ---
 function actualizarAlertasVisibles() {
+    // Limpiamos ambas capas visuales
     layerManuales.clearLayers(); 
+    layerPendientes.clearLayers(); 
+
     marcadoresPeligro.forEach(m => {
         const idMapa = m.id_mapa_asociado;
+        
+        // Verificamos si la capa asociada está activa (o es el mapa general id=1)
         if (capasActivas[idMapa] || idMapa == 1) {
-            if(m.tipo_geom === 'Polygon') {
-                m.eachLayer(l => layerManuales.addLayer(l));
+            
+            // --- CAMBIO AQUÍ: CLASIFICACIÓN ---
+            // Si el nombre dice "PENDIENTE", va a la capa de Pendientes
+            // Si no, va a la capa Manuales (General)
+            if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) {
+                if(m.addTo) m.addTo(layerPendientes); 
+                else layerPendientes.addLayer(m);
             } else {
-                layerManuales.addLayer(m);
-                if (m.radio_custom > 0 && m.tipo_geom === 'Point') {
-                    L.circle(m.getLatLng(), { radius: m.radio_custom, color: '#e74c3c', fillColor: '#c0392b', fillOpacity: 0.3, weight: 1 }).addTo(layerManuales);
+                if(m.addTo) m.addTo(layerManuales); 
+                else {
+                    layerManuales.addLayer(m);
+                    // Si es un punto manual con radio, dibujamos el círculo también
+                    if (m.radio_custom > 0 && m.tipo_geom === 'Point') {
+                        L.circle(m.getLatLng(), { radius: m.radio_custom, color: '#e74c3c', fillColor: '#c0392b', fillOpacity: 0.3, weight: 1 }).addTo(layerManuales);
+                    }
                 }
             }
         }
     });
 }
 
-// --- ALGORITMO: PUNTO EN POLÍGONO ---
-function isMarkerInsidePolygon(lat, lng, poly) {
-    let polys = [];
-    if (poly.type === 'Polygon') polys.push(poly.coordinates);
-    if (poly.type === 'MultiPolygon') polys = poly.coordinates;
-    let inside = false;
-    for (let i = 0; i < polys.length; i++) {
-        let rings = polys[i];
-        let polygonCoords = rings[0]; 
-        let x = lng, y = lat;
-        for (let k = 0, j = polygonCoords.length - 1; k < polygonCoords.length; j = k++) {
-            let xi = polygonCoords[k][0], yi = polygonCoords[k][1];
-            let xj = polygonCoords[j][0], yj = polygonCoords[j][1];
-            let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-            if (intersect) inside = !inside;
+// --- 5. ALGORITMOS DE SEGURIDAD ---
+
+// A) MATEMÁTICA: RAY CASTING PARA POLYGONOS SIMPLES
+// Nota: GeoJSON usa [lng, lat], pero Leaflet/GPS usan [lat, lng].
+function isMarkerInsidePolygon(lat, lng, polygonCoords) {
+    // polygonCoords es [Ring1, Ring2...], donde Ring1 es el exterior.
+    const x = lng, y = lat;
+    
+    // 1. Check Exterior Ring (index 0)
+    if (pointInRing(x, y, polygonCoords[0])) {
+        // 2. Check Holes (index 1+)
+        let inHole = false;
+        for (let k = 1; k < polygonCoords.length; k++) {
+            if (pointInRing(x, y, polygonCoords[k])) {
+                inHole = true;
+                break;
+            }
         }
+        if (!inHole) return true; // Dentro y no en agujero
+    }
+    return false;
+}
+
+function pointInRing(x, y, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1];
+        const xj = ring[j][0], yj = ring[j][1];
+        const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
     }
     return inside;
 }
 
+
+// B) CHEQUEO GENERAL (BD) - CORREGIDO
 function checkPeligros(lat, lng) {
-    if (IS_ADMIN) return; 
-    if (alertasSilenciadas) return;
-    const divAlertas = document.getElementById('alertas'); divAlertas.innerHTML = '';
+    // 1. Si el botón GENERAL está apagado, NO hacemos nada.
+    if (typeof IS_ADMIN !== 'undefined' && IS_ADMIN) return;
+    if (!seguridadGeneralActiva) {
+        // Limpiamos alertas generales si se apaga el botón
+        const div = document.getElementById('alertas');
+        if (div && !div.innerHTML.includes("PENDIENTE")) div.style.display = 'none';
+        return;
+    }
+    
+    // Si ya hay una pendiente sonando (prioridad), no mostramos alertas generales
+    if (pendienteActiva) return;
+
+    const divAlertas = document.getElementById('alertas'); 
     let dangerDetected = false;
+    let htmlAlertas = "";
+    
     marcadoresPeligro.forEach(m => {
+        // 2. FILTRO CLAVE: Si es Pendiente, LA IGNORAMOS (el otro botón se encarga)
+        if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) return;
+
         let isDanger = false;
+        
         if (m.tipo_geom === 'Point') {
             const distancia = map.distance([lat, lng], m.getLatLng());
             const radioAlerta = (m.radio_custom > 0) ? m.radio_custom : 15; 
             if(distancia <= radioAlerta) isDanger = true;
         } 
         else if (m.tipo_geom === 'Polygon') {
-            if (isMarkerInsidePolygon(lat, lng, m.rawGeoJSON)) isDanger = true;
+            let flatList = aplanarGeometria(m.rawGeoJSON);
+            for(let coords of flatList) {
+                if (isMarkerInsidePolygon(lat, lng, coords)) { isDanger = true; break; }
+            }
         }
+
         if(isDanger) {
             dangerDetected = true;
-            divAlertas.innerHTML += `<div class="alerta-card"><i class="fas fa-exclamation-triangle"></i><br>⚠️ ZONA DE PELIGRO<br><span style="font-size:0.9rem;">${m.nombre_alerta}</span></div>`;
+            htmlAlertas += `<div class="alerta-card"><i class="fas fa-exclamation-triangle"></i><br>⚠️ ZONA DE PELIGRO<br><span style="font-size:0.9rem;">${m.nombre_alerta}</span></div>`;
         }
     });
-    divAlertas.style.display = dangerDetected ? 'block' : 'none';
-    if(dangerDetected) {
+
+    if (dangerDetected) {
+        divAlertas.innerHTML = htmlAlertas;
+        divAlertas.style.display = 'block';
+        
+        // SONIDO GENERAL
         const now = Date.now();
         if (now - lastSoundTime > 5000) { 
             const audio = document.getElementById('alertaAudio');
-            audio.currentTime = 0; audio.play().catch(()=>{});
+            if(audio) audio.play().catch(e => console.log("Falta click usuario"));
             lastSoundTime = now; 
+        }
+    } else {
+        // Solo ocultamos si no hay pendiente activa
+        if (!divAlertas.innerHTML.includes("PENDIENTE")) divAlertas.style.display = 'none';
+    }
+}
+
+// C) CHEQUEO PENDIENTES (CORREGIDO)
+function checkPendientes(lat, lng) {
+    // 1. Si el botón PENDIENTE está apagado, NO hacemos nada y reseteamos.
+    if (typeof IS_ADMIN !== 'undefined' && IS_ADMIN) return;
+    if (!seguridadPendienteActiva) {
+        if (pendienteActiva) detenerLoopAlerta();
+        return;
+    }
+    
+    // Si el usuario ya confirmó asistencia, no molestamos más.
+    if (asistidoConfirmado) return;
+
+    let alertaDetectada = null;
+
+    for (let m of marcadoresPeligro) {
+        // Solo buscamos polígonos que digan "PENDIENTE"
+        if (m.tipo_geom === 'Polygon' && m.nombre_alerta && m.nombre_alerta.toUpperCase().includes('PENDIENTE')) {
+            
+            // Usamos SCAN RECURSIVO para encontrar los polígonos reales
+            const anillos = scanCapasRecursivo(m);
+            for (let anillo of anillos) {
+                if (isPointInRing(lat, lng, anillo)) {
+                    alertaDetectada = m;
+                    break;
+                }
+            }
+        }
+        if (alertaDetectada) break;
+    }
+
+    // GESTIÓN DE ESTADO (ENTRAR / SALIR)
+    if (alertaDetectada) {
+        // Si acabamos de entrar (no había activa antes)
+        if (!pendienteActiva) {
+            pendienteActiva = alertaDetectada;
+            const nivel = pendienteActiva.nombre_alerta.toUpperCase().includes("CRÍTICA") ? "ALTO" : "MEDIO";
+            iniciarLoopAlerta(nivel);
+        }
+        // Si ya había una activa, no hacemos nada (el loop de sonido ya está corriendo)
+    } else {
+        // Si no detectamos nada pero había una activa -> SALIMOS
+        if (pendienteActiva) {
+            detenerLoopAlerta();
         }
     }
 }
 
-// --- 5. GESTIÓN OFFLINE ---
-window.descargarZona = function(idZona) {
-    const urls = [];
-    LISTA_MAPAS.forEach(m => { if (m.id_zona == idZona && m.ruta_archivo && m.ruta_archivo !== 'manual') urls.push(m.ruta_archivo); });
-    if (urls.length > 0) {
-        document.getElementById('loader').style.display = 'block';
-        setTimeout(() => { if(document.getElementById('loader').style.display === 'block') document.getElementById('loader').style.display = 'none'; }, 8000);
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-            navigator.serviceWorker.controller.postMessage({ action: 'CACHE_NEW_ZONE', urls: urls, zoneId: idZona });
-        } else { alert("Recarga la página."); document.getElementById('loader').style.display = 'none'; }
-    } else { alert("Zona vacía."); }
-};
-function setupServiceWorkerListener() {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.addEventListener('message', event => {
-            if(event.data.action === 'ZONE_CACHED_OK'){
-                document.getElementById('loader').style.display = 'none';
-                alert("✅ Zona descargada.");
-                const badge = document.getElementById('offline-badge-' + event.data.zoneId);
-                if(badge) badge.innerHTML = '<i class="fas fa-check-circle" style="color:#27ae60;"></i> Offline';
-            }
-        });
-    }
+// Auxiliares para el escaneo (Agrégalas al final del archivo)
+function scanCapasRecursivo(layer) {
+    let anillos = [];
+    if (layer instanceof L.Polygon) return aplanarAnillos(layer.getLatLngs());
+    if (layer.eachLayer) { layer.eachLayer(l => { anillos = anillos.concat(scanCapasRecursivo(l)); }); }
+    return anillos;
 }
 
-// --- 6. EVENTOS UI Y GPS ---
+function aplanarAnillos(arr) {
+    if (!Array.isArray(arr) || arr.length === 0) return [];
+    if (arr[0] instanceof L.LatLng) return [arr];
+    let res = [];
+    arr.forEach(sub => res = res.concat(aplanarAnillos(sub)));
+    return res;
+}
+
+function isPointInRing(lat, lng, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i].lng, yi = ring[i].lat;
+        const xj = ring[j].lng, yj = ring[j].lat;
+        const intersect = ((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+// FUNCIÓN DE SONIDO Y VISUALIZACIÓN (CORREGIDA)
+function iniciarLoopAlerta(nivel) {
+    // Doble chequeo de seguridad
+    if (!seguridadPendienteActiva || asistidoConfirmado) return;
+
+    const colorFondo = (nivel === "ALTO") ? "#c0392b" : "#e67e22"; // Rojo o Naranja
+    const titulo = (nivel === "ALTO") ? "PENDIENTE CRÍTICA" : "PENDIENTE MEDIA";
+    
+    const divAlertas = document.getElementById('alertas');
+    divAlertas.style.display = 'block';
+    
+    // HTML DE LA ALERTA GRANDE
+    divAlertas.innerHTML = `
+        <div class="alerta-card" style="background:${colorFondo}; width: 90%; margin: 10px auto; padding: 20px;">
+            <i class="fas fa-mountain" style="font-size:3rem; margin-bottom:15px; color:white;"></i><br>
+            <strong style="font-size:1.5rem; color:white;">⚠️ ${titulo}</strong><br>
+            <span style="font-size:1.1rem; color:white;">RIESGO DE VOLCAMIENTO</span><br><br>
+            <button onclick="confirmarAsistencia()" style="padding:15px 30px; background:white; color:${colorFondo}; border:none; border-radius:50px; font-weight:bold; font-size:1.2rem; cursor:pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                <i class="fas fa-check"></i> CONFIRMAR ASISTENCIA
+            </button>
+        </div>
+    `;
+
+    // REPRODUCCIÓN DE SONIDO (FORZADA)
+    const audio = document.getElementById('alertaAudio');
+    if (audio) {
+        audio.currentTime = 0; // Reiniciar audio
+        audio.loop = true;     // Activar bucle
+        
+        // Intentar reproducir con promesa para capturar errores
+        var playPromise = audio.play();
+        if (playPromise !== undefined) {
+            playPromise.then(_ => {
+                // Reproducción iniciada correctamente
+            })
+            .catch(error => {
+                console.log("El navegador bloqueó el audio. El usuario debe interactuar primero.");
+            });
+        }
+    }
+
+    // NOTA: He quitado el setTimeout que apagaba la alerta a los 15s.
+    // La alerta de pendiente es CRÍTICA, no debe desaparecer sola hasta que:
+    // 1. El usuario salga de la zona.
+    // 2. El usuario confirme asistencia.
+}
+
+function detenerLoopAlerta() {
+    pendienteActiva = null; asistidoConfirmado = false;
+    clearTimeout(timerAlerta); clearTimeout(timerEspera);
+    const audio = document.getElementById('alertaAudio');
+    audio.pause(); audio.loop = false;
+    
+    const div = document.getElementById('alertas');
+    if(div.innerHTML.includes('PENDIENTE')) div.style.display = 'none';
+}
+
+function confirmarAsistencia() {
+    asistidoConfirmado = true;
+    clearTimeout(timerAlerta);
+    const audio = document.getElementById('alertaAudio');
+    audio.pause(); audio.loop = false;
+    document.getElementById('alertas').style.display = 'none';
+    alert("✅ Asistencia confirmada.");
+}
+
+// --- 6. EVENTOS DE INTERFAZ ---
+window.toggleSeguridad = function(tipo) {
+    const btn = (tipo === 'general') ? document.getElementById('btnToggleGeneral') : document.getElementById('btnTogglePendiente');
+    if (tipo === 'general') {
+        seguridadGeneralActiva = !seguridadGeneralActiva;
+        btn.innerHTML = seguridadGeneralActiva ? "ON" : "OFF";
+        btn.className = seguridadGeneralActiva ? "btn-action btn-alert-on" : "btn-action btn-alert-off";
+    } else {
+        seguridadPendienteActiva = !seguridadPendienteActiva;
+        btn.innerHTML = seguridadPendienteActiva ? "ON" : "OFF";
+        btn.className = seguridadPendienteActiva ? "btn-action btn-alert-on" : "btn-action btn-alert-off";
+        if (!seguridadPendienteActiva) detenerLoopAlerta();
+    }
+};
+
+window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 0) {
+    const data = { action: 'add_marker', lat: ll.lat, lng: ll.lng, nombre: nom, descripcion: desc, nivel: nivel, radio: radio, id_mapa: id_destino };
+    fetch('Api/api_mapa.php', { method:'POST', body:JSON.stringify(data) }).then(r=>r.json()).then(res=>{ if(res.success) { cargarDatosDeAlertas(); alert("Guardado."); } });
+};
+window.borrarMarcador = function(id) { if(confirm("¿Eliminar?")) fetch('Api/api_mapa.php', { method: 'POST', body: JSON.stringify({ action: 'delete_marker', id: id }) }).then(r=>r.json()).then(res=>{ if(res.success) cargarDatosDeAlertas(); }); };
+window.reportarUser = function() {
+    const msg = prompt("⚠️ REPORTE SOS"); if(!msg) return;
+    navigator.geolocation.getCurrentPosition(p => saveMarker({lat: p.coords.latitude, lng: p.coords.longitude}, "🚨 SOS", msg, "Critico", 20, 1), null, {enableHighAccuracy:true});
+};
+window.iniciarRastreoGPS = function() {
+    if (!navigator.geolocation) return;
+    watchId = navigator.geolocation.watchPosition(p => {
+        const lat = p.coords.latitude, lng = p.coords.longitude, acc = p.coords.accuracy;
+        ultimaPosicion = [lat, lng];
+        if(userMarker) { userMarker.setLatLng([lat, lng]); userMarker.bindPopup(`Precisión: ${Math.round(acc)}m`); } 
+        else if(map) { userMarker = L.circleMarker([lat, lng], { radius: 8, fillColor: "#3498db", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map); }
+        if (accuracyCircle) { accuracyCircle.setLatLng([lat, lng]); accuracyCircle.setRadius(acc); } 
+        else if(map) { accuracyCircle = L.circle([lat, lng], { radius: acc, color: '#3498db', fillOpacity: 0.15, weight: 1 }).addTo(map); }
+    }, null, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+};
+window.centrarEnUsuario = function() { if(ultimaPosicion && map) map.setView(ultimaPosicion, 16, {animate: true}); };
 function setupUIEvents() {
     const form = document.getElementById('markerFormContainer');
     let currentLatLng;
     document.getElementById('cancelMarker').onclick = () => { form.style.display='none'; document.getElementById('markerForm').reset(); };
     map.on('contextmenu', function(e) {
         if (!IS_ADMIN) return; 
-        currentLatLng = e.latlng; if(navigator.vibrate) navigator.vibrate(50);
+        currentLatLng = e.latlng;
         const selector = document.getElementById('selectorMapaForm');
         if(selector) {
             selector.innerHTML = ''; 
@@ -435,67 +715,35 @@ function setupUIEvents() {
     const btnBorrar = document.getElementById('borrarMarcadores');
     if(btnBorrar) btnBorrar.onclick = () => { if(confirm("¿RESETEAR TODO?")) fetch('Api/api_mapa.php?action=delete_all', { method: 'POST' }).then(() => { cargarDatosDeAlertas(); alert("Reset completo."); }); };
 }
-
-window.borrarMarcador = function(id) { if(confirm("¿Eliminar?")) fetch('Api/api_mapa.php', { method: 'POST', body: JSON.stringify({ action: 'delete_marker', id: id }) }).then(r=>r.json()).then(res=>{ if(res.success) cargarDatosDeAlertas(); }); };
-
-window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 0) {
-    const data = { action: 'add_marker', lat: ll.lat, lng: ll.lng, nombre: nom, descripcion: desc, nivel: nivel, radio: radio, id_mapa: id_destino };
-    fetch('Api/api_mapa.php', { method:'POST', body:JSON.stringify(data) }).then(r=>r.json()).then(res=>{ if(res.success) { cargarDatosDeAlertas(); alert("Guardado."); } });
+window.descargarZona = function(idZona) {
+    const urls = [];
+    LISTA_MAPAS.forEach(m => { if (m.id_zona == idZona && m.ruta_archivo && m.ruta_archivo !== 'manual') urls.push(m.ruta_archivo); });
+    if (urls.length > 0) {
+        document.getElementById('loader').style.display = 'block';
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ action: 'CACHE_NEW_ZONE', urls: urls, zoneId: idZona });
+        } else { alert("Recarga la página."); document.getElementById('loader').style.display = 'none'; }
+    } else { alert("Zona vacía."); }
 };
+function setupServiceWorkerListener() {
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', event => {
+            if(event.data.action === 'ZONE_CACHED_OK'){
+                document.getElementById('loader').style.display = 'none';
+                alert("✅ Zona descargada.");
+            }
+        });
+    }
+}
 
-window.reportarUser = function() {
-    const msg = prompt("⚠️ REPORTE SOS"); if(!msg) return;
-    navigator.geolocation.getCurrentPosition(p => saveMarker({lat: p.coords.latitude, lng: p.coords.longitude}, "🚨 SOS", msg, "Critico", 20, 1), null, {enableHighAccuracy:true});
+
+
+
+
+window.abrirPIV = function () {
+  const id = (typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL) ? MAPA_ID_ACTUAL : 0;
+  const url = id ? `piv_formulario.php?id_mapa=${id}` : `piv_formulario.php`;
+  window.open(url, '_blank');
 };
-
-window.toggleAlertas = function() {
-    alertasSilenciadas = !alertasSilenciadas;
-    const btn = document.getElementById('btnToggleAlertas');
-    if (alertasSilenciadas) { btn.className = "btn-panel btn-alert-off"; btn.innerHTML = '<i class="fas fa-bell-slash"></i> OFF'; document.getElementById('alertas').innerHTML = ''; } 
-    else { btn.className = "btn-panel btn-alert-on"; btn.innerHTML = '<i class="fas fa-bell"></i> ON'; if(ultimaPosicion) checkPeligros(ultimaPosicion[0], ultimaPosicion[1]); }
-};
-
-window.iniciarRastreoGPS = function() {
-    if (!navigator.geolocation) { console.warn("GPS no soportado"); return; }
-    
-    const opcionesGPS = {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 10000 
-    };
-
-    watchId = navigator.geolocation.watchPosition(p => {
-        const lat = p.coords.latitude; 
-        const lng = p.coords.longitude; 
-        const accuracy = p.coords.accuracy; 
-        ultimaPosicion = [lat, lng];
-
-        let colorRadio = '#3498db'; 
-        let advertencia = "";
-
-        if (accuracy > 2000) { colorRadio = '#e74c3c'; advertencia = " (Mala Señal)"; } 
-        else if (accuracy > 50) { colorRadio = '#f39c12'; advertencia = " (Señal Débil)"; }
-
-        if(userMarker) {
-            userMarker.setLatLng([lat, lng]);
-            userMarker.bindPopup("<b>Estás aquí</b><br>Precisión: " + Math.round(accuracy) + "m" + advertencia);
-        } else if(map) {
-            userMarker = L.circleMarker([lat, lng], { radius: 8, fillColor: "#3498db", color: "#fff", weight: 2, fillOpacity: 1 }).addTo(map);
-        }
-
-        if (accuracyCircle) {
-            accuracyCircle.setLatLng([lat, lng]);
-            accuracyCircle.setRadius(accuracy);
-            accuracyCircle.setStyle({ color: colorRadio, fillColor: colorRadio });
-        } else if(map) {
-            accuracyCircle = L.circle([lat, lng], { radius: accuracy, color: colorRadio, fillColor: colorRadio, fillOpacity: 0.15, weight: 1 }).addTo(map);
-        }
-
-        checkPeligros(lat, lng);
-
-    }, err => { console.error("Error GPS", err); }, opcionesGPS);
-};
-
-window.centrarEnUsuario = function() { if(ultimaPosicion && map) { map.setView(ultimaPosicion, 16, {animate: true}); } };
 
 initMap();

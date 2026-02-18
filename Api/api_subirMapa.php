@@ -1,11 +1,31 @@
 <?php
 // ==========================================================
-// Api/api_subirMapa.php (v6 - Con Buffer Automático de 10m)
+// Api/api_subirMapa.php (v13 - Cálculo de Anillo Preciso en Metros)
 // ==========================================================
 session_start();
 require_once __DIR__ . '/../Config/db_config.php';
 
-// Aumentar memoria para procesamiento de XML/JSON grandes
+// --- NUEVAS FUNCIONES PARA PENDIENTES ---
+function extraerRGB($str) {
+    if (preg_match('/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/', $str, $m)) {
+        return [(int)$m[1], (int)$m[2], (int)$m[3]]; 
+    }
+    return null;
+}
+
+function esColorSimilar($rgbInput, $listaObjetivo, $tolerancia = 10) {
+    if (!$rgbInput) return false;
+    foreach ($listaObjetivo as $target) {
+        $diffR = abs($rgbInput[0] - $target[0]);
+        $diffG = abs($rgbInput[1] - $target[1]);
+        $diffB = abs($rgbInput[2] - $target[2]);
+        if ($diffR <= $tolerancia && $diffG <= $tolerancia && $diffB <= $tolerancia) return true;
+    }
+    return false;
+}
+
+
+
 ini_set('memory_limit', '512M');
 
 $es_admin = ($_SESSION['tipo_usuario'] ?? '') === 'admin';
@@ -32,47 +52,52 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
             $id_zona = $stmtInsertZona->fetchColumn();
         }
 
-        // 2. Procesamiento del Archivo Físico
+        // 2. Procesamiento del Archivo
         $nombre_original = $_FILES["mapa"]["name"];
         $tmp_name = $_FILES["mapa"]["tmp_name"];
         $ext = strtolower(pathinfo($nombre_original, PATHINFO_EXTENSION));
         $nombre_mapa_limpio = pathinfo($nombre_original, PATHINFO_FILENAME);
         $uid = uniqid();
-        $ruta_final = ""; $tipo_mapa = "";
         
+        $ruta_final = ""; 
+        $tipo_mapa = "";
         $contentForScanner = null; 
-        $isKmlContent = false;
 
         $check = $pdo->prepare("SELECT 1 FROM public.mapa WHERE nombre_mapa = ?");
         $check->execute([$nombre_mapa_limpio]);
         if ($check->fetch()) { header("Location: ../index.php?status=error&msg=El nombre ya existe"); exit; }
 
+        // --- CARGA DE ARCHIVO ---
         if ($ext === 'kmz') {
             $zip = new ZipArchive;
             if ($zip->open($tmp_name) === TRUE) {
                 $kmlName = false;
                 for($i = 0; $i < $zip->numFiles; $i++){
                     $info = pathinfo($zip->statIndex($i)['name']);
-                    if(isset($info['extension']) && strtolower($info['extension']) === 'kml'){ $kmlName = $zip->statIndex($i)['name']; break; }
+                    if(isset($info['extension']) && strtolower($info['extension']) === 'kml'){ 
+                        $kmlName = $zip->statIndex($i)['name']; break; 
+                    }
                 }
                 if($kmlName) {
-                    $contentForScanner = $zip->getFromName($kmlName); 
-                    $isKmlContent = true;
+                    $contentForScanner = $zip->getFromName($kmlName);
                     $ruta_final = "uploads/" . $uid . '-' . $nombre_mapa_limpio . '.kml';
                     file_put_contents("../" . $ruta_final, $contentForScanner);
-                    $tipo_mapa = "KML";
+                    $tipo_mapa = "KML"; 
+                } else {
+                    $zip->close();
+                    header("Location: ../index.php?status=error&msg=El KMZ no contiene un archivo KML válido."); exit;
                 }
                 $zip->close();
+            } else {
+                header("Location: ../index.php?status=error&msg=Error al abrir el KMZ."); exit;
             }
         } elseif ($ext === 'kml') {
             $contentForScanner = file_get_contents($tmp_name);
-            $isKmlContent = true;
             $ruta_final = "uploads/" . $uid . '-' . basename($nombre_original);
             move_uploaded_file($tmp_name, "../" . $ruta_final);
             $tipo_mapa = "KML";
-        } elseif ($ext === 'geojson') {
+        } elseif ($ext === 'geojson' || $ext === 'json') {
             $contentForScanner = file_get_contents($tmp_name);
-            $isKmlContent = false;
             if (json_decode($contentForScanner) === null) { header("Location: ../index.php?status=error&msg=GeoJSON inválido"); exit; }
             $ruta_final = "uploads/" . $uid . '-' . basename($nombre_original);
             move_uploaded_file($tmp_name, "../" . $ruta_final);
@@ -85,81 +110,219 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
             $stmt = $pdo->prepare($sql);
             $stmt->execute([$nombre_mapa_limpio, $tipo_mapa, $ruta_final, $categoria, $id_zona]);
             $nuevo_id_mapa = $stmt->fetchColumn();
+            
             $pdo->prepare("INSERT INTO public.usuario_mapa (id_usuario, id_mapa) VALUES (?, ?)")->execute([$id_usuario_actual, $nuevo_id_mapa]);
 
+            // === 3.5 Guardar borrador PIV desde propiedades del GeoJSON ===
+            if ($tipo_mapa === "GeoJSON" && !empty($contentForScanner)) {
+                $j = json_decode($contentForScanner, true);
+                if (is_array($j) && !empty($j['features'][0]['properties']) && is_array($j['features'][0]['properties'])) {
+                    $p = $j['features'][0]['properties'];
+
+                    $predio = trim($p['NOM_PREDIO'] ?? '');
+                    $codigo = trim($p['CODIGO'] ?? '');
+                    $temporada = trim($p['TEMPORADA'] ?? '');
+                    $nom_area = trim($p['NOM_AREA'] ?? '');
+                    $numesc = trim($p['NUMESCENAR'] ?? '');
+                    $escenario = $nom_area ?: $numesc;
+
+                    $especie = trim($p['NOM_TIPUSO'] ?? '');
+                    $superficie = ($p['SUPERFICIE'] ?? '') !== '' ? (float)$p['SUPERFICIE'] : null;
+                    $team_equipo = trim($p['EQUIPO_MAD'] ?? '');
+                    $jefe_faena = trim($p['SUPERVISOR'] ?? '');
+                    $num_acta = trim($p['NUM_ACTA'] ?? '');
+
+                    $sqlB = "
+                      INSERT INTO public.piv_ficha_borrador
+                        (id_mapa, id_zona, predio, codigo_predio, escenario, temporada, especie, superficie_ha, team_equipo, jefe_faena, num_acta, fuente_props, updated_at)
+                      VALUES
+                        (:id_mapa, :id_zona, :predio, :codigo, :escenario, :temporada, :especie, :superficie, :team, :jefe, :acta, CAST(:props AS jsonb), now())
+                      ON CONFLICT (id_mapa) DO UPDATE SET
+                        id_zona = EXCLUDED.id_zona,
+                        predio = EXCLUDED.predio,
+                        codigo_predio = EXCLUDED.codigo_predio,
+                        escenario = EXCLUDED.escenario,
+                        temporada = EXCLUDED.temporada,
+                        especie = EXCLUDED.especie,
+                        superficie_ha = EXCLUDED.superficie_ha,
+                        team_equipo = EXCLUDED.team_equipo,
+                        jefe_faena = EXCLUDED.jefe_faena,
+                        num_acta = EXCLUDED.num_acta,
+                        fuente_props = EXCLUDED.fuente_props,
+                        updated_at = now();
+                    ";
+
+                    $stmtB = $pdo->prepare($sqlB);
+                    $stmtB->execute([
+                        'id_mapa' => $nuevo_id_mapa,
+                        'id_zona' => $id_zona,
+                        'predio' => $predio,
+                        'codigo' => $codigo,
+                        'escenario' => $escenario,
+                        'temporada' => $temporada,
+                        'especie' => $especie,
+                        'superficie' => $superficie,
+                        'team' => $team_equipo,
+                        'jefe' => $jefe_faena,
+                        'acta' => $num_acta,
+                        'props' => json_encode($p, JSON_UNESCAPED_UNICODE),
+                    ]);
+                }
+            }
+
             // =========================================================
-            // 4. ESCÁNER AUTOMÁTICO CON BUFFER DE 10 METROS
+            // 4. GENERACIÓN DE ALERTAS (CORRECCIÓN MATEMÁTICA 3857)
             // =========================================================
-            $targetID_String = "595029840"; 
-            $targetID_Int = 595029840;      
             $alertasDetectadas = 0;
 
-            // NOTA TÉCNICA:
-            // Usamos ST_Buffer sobre tipo 'geography' para que el radio (10) sea en metros.
-            // ST_Multi asegura compatibilidad si la columna es MultiPolygon.
-            // ST_SetSRID(..., 4326) asegura que PostGIS sepa que son Lat/Long.
-
             if ($contentForScanner) {
-                if ($isKmlContent) {
-                    // --- KML (Buffer 10m) ---
-                    try {
-                        libxml_use_internal_errors(true);
-                        $xml = simplexml_load_string($contentForScanner);
-                        if ($xml !== false) {
-                            $xml->registerXPathNamespace('kml', 'http://www.opengis.net/kml/2.2');
-                            $xpathQuery = "//kml:Placemark[.//kml:SimpleData[@name='OBJECTID'][.='$targetID_String'] or .//kml:SimpleData[@name='objectid'][.='$targetID_String']]";
-                            $placemarks = $xml->xpath($xpathQuery);
+                
+                function normalizarColor($color) {
+                    return str_replace(' ', '', strtoupper(trim($color)));
+                }
 
-                            foreach ($placemarks as $pm) {
-                                $geomXML = "";
-                                if (isset($pm->Polygon)) { $geomXML = $pm->Polygon->asXML(); }
-                                elseif (isset($pm->MultiGeometry)) { $geomXML = $pm->MultiGeometry->asXML(); }
-                                elseif (isset($pm->LineString)) { $geomXML = $pm->LineString->asXML(); }
-                                
-                                if ($geomXML) {
-                                    $nombreAlerta = "⚠️ Buffer KML (10m)";
-                                    $descAlerta = "Zona de seguridad (Buffer 10m) para ID: " . $targetID_String;
-                                    
-                                    // CONSULTA CON BUFFER 10 METROS
-                                    $sqlAlerta = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
-                                                  VALUES (?, ?, 'poligono', 'Critico', 'activa', ?, ?, 
-                                                  ST_Multi(ST_Buffer(ST_SetSRID(ST_GeomFromKML(?), 4326)::geography, 10)::geometry))";
-                                    
-                                    $stmtP = $pdo->prepare($sqlAlerta);
-                                    $stmtP->execute([$nombreAlerta, $descAlerta, $nuevo_id_mapa, $id_usuario_actual, $geomXML]);
-                                    $alertasDetectadas++;
-                                }
+                function detectarPeligroPorColor($props) {
+                    $color = $props['FILL_COLOR'] ?? $props['Fill_Color'] ?? $props['fill_color'] ?? '';
+                    if (!$color) return false;
+                    $colorNorm = normalizarColor($color);
+
+                    if ($colorNorm === 'RGB(128,128,64)') return 'Vegetación Nativa';
+                    if ($colorNorm === 'RGB(0,128,255)') return 'Protección de Agua';
+                    return false;
+                }
+
+                // --- LÓGICA GEOJSON ---
+                if ($tipo_mapa === 'GeoJSON') {
+                    $json = json_decode($contentForScanner, true);
+
+                    //NNUEVO
+
+                    // 1. CASO PENDIENTES: Fusión Topológica (NUEVO)
+                    if (stripos($categoria, 'Pendiente') !== false && isset($json['features'])) {
+                        $targetAlto = [[0,0,0], [168,0,0], [255,0,0], [52,52,52]]; 
+                        $targetMedio = [[255,85,0], [230,152,0]]; 
+
+                        $geomsAlto = [];
+                        $geomsMedio = [];
+
+                        foreach ($json['features'] as $f) {
+                            $props = $f['properties'] ?? [];
+                            $colorStr = $props['FILL_COLOR'] ?? $props['Fill_Color'] ?? $props['fill_color'] ?? '';
+                            $rgb = extraerRGB($colorStr);
+                            if ($rgb && isset($f['geometry'])) {
+                                if (esColorSimilar($rgb, $targetAlto, 10)) $geomsAlto[] = $f['geometry'];
+                                elseif (esColorSimilar($rgb, $targetMedio, 10)) $geomsMedio[] = $f['geometry'];
                             }
                         }
-                        libxml_clear_errors();
-                    } catch (Exception $e) { }
 
-                } else {
-                    // --- GeoJSON (Buffer 10m) ---
-                    $json = json_decode($contentForScanner, true);
+                        $insertarFusion = function($geoms, $nombre, $nivel) use ($pdo, $nuevo_id_mapa, $id_usuario_actual) {
+                            if (empty($geoms)) return;
+                            $col = ["type" => "GeometryCollection", "geometries" => $geoms];
+                            $sql = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
+                                    SELECT ?, 'Pendiente Fusionada', 'poligono', ?, 'activa', ?, ?, 
+                                    ST_Multi(ST_Union(d.geom)) 
+                                    FROM (SELECT (ST_Dump(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)))).geom) AS d";
+                            $pdo->prepare($sql)->execute([$nombre, $nivel, $nuevo_id_mapa, $id_usuario_actual, json_encode($col)]);
+                        };
+
+                        $insertarFusion($geomsAlto, "PENDIENTE CRÍTICA", "Critico");
+                        $insertarFusion($geomsMedio, "PENDIENTE MEDIA", "Alto");
+                        $alertasDetectadas++;
+                    }
+
+
+                    //FIN NUEVO    
+
+
+
+
                     if (isset($json['features'])) {
                         foreach ($json['features'] as $feature) {
                             $props = $feature['properties'] ?? [];
-                            $objID = $props['OBJECTID'] ?? $props['objectid'] ?? $props['ObjectId'] ?? null;
-                            if ($objID == $targetID_Int || $objID == $targetID_String) {
-                                $geomJSON = json_encode($feature['geometry']);
+                            $geomJSON = json_encode($feature['geometry']);
+                            
+                            // A) LÓGICA ACTAS (Buffer Interno -15m usando Proyección Plana 3857)
+                            if (strtolower($categoria) === 'acta') {
+                            
+$sqlAnillo = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
+              VALUES (?, ?, 'poligono', 'Advertencia', 'activa', ?, ?, 
+              ST_Multi(ST_Transform(
+                  ST_Difference(
+                      ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326), 3857)),
+                      ST_Buffer(ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326), 3857)), -20) 
+                  ), 
+              4326)::geometry))";
+
+// NOTA: Aumenté a -20 metros para darte un margen de seguridad un poco más amplio
+// y asegurarme de que el GPS lo detecte bien.;
                                 
-                                // CONSULTA CON BUFFER 10 METROS
+                                $pdo->prepare($sqlAnillo)->execute([
+                                    "⚠️ Límite de Acta", 
+                                    "Zona de advertencia (15m antes de salir)", 
+                                    $nuevo_id_mapa, 
+                                    $id_usuario_actual, 
+                                    $geomJSON, 
+                                    $geomJSON
+                                ]);
+                                $alertasDetectadas++;
+                            }
+
+                            // B) LÓGICA COLORES (Buffer Externo 10m)
+                            $tipoDetectado = detectarPeligroPorColor($props);
+                            if ($tipoDetectado) {
                                 $sqlAlerta = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
                                               VALUES (?, ?, 'poligono', 'Critico', 'activa', ?, ?, 
-                                              ST_Multi(ST_Buffer(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)::geography, 10)::geometry))";
+                                              ST_Multi(ST_Buffer(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326))::geography, 10)::geometry))";
 
-                                $stmtP = $pdo->prepare($sqlAlerta);
-                                $stmtP->execute(["⚠️ Buffer GeoJSON (10m)", "Zona de seguridad (Buffer 10m) para ID: $objID", $nuevo_id_mapa, $id_usuario_actual, $geomJSON]);
+                                $pdo->prepare($sqlAlerta)->execute([
+                                    "⚠️ Zona Protegida ($tipoDetectado)", 
+                                    "Buffer automático por color (10m).", 
+                                    $nuevo_id_mapa, 
+                                    $id_usuario_actual, 
+                                    $geomJSON
+                                ]);
                                 $alertasDetectadas++;
                             }
                         }
                     }
                 }
+                
+                // --- LÓGICA KML (Actas con corrección 3857 también) ---
+                elseif ($tipo_mapa === 'KML') {
+                    try {
+                        libxml_use_internal_errors(true);
+                        $xml = simplexml_load_string($contentForScanner);
+                        if ($xml !== false) {
+                            $xml->registerXPathNamespace('kml', 'http://www.opengis.net/kml/2.2');
+                            $placemarks = $xml->xpath("//kml:Placemark");
+                            foreach ($placemarks as $pm) {
+                                $geomXML = "";
+                                if (isset($pm->Polygon)) $geomXML = $pm->Polygon->asXML();
+                                elseif (isset($pm->MultiGeometry)) $geomXML = $pm->MultiGeometry->asXML();
+                                
+                                if ($geomXML) {
+                                    if (strtolower($categoria) === 'acta') {
+                                        $sqlAnillo = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
+                                                      VALUES (?, ?, 'poligono', 'Advertencia', 'activa', ?, ?, 
+                                                      ST_Multi(ST_Transform(
+                                                          ST_Difference(
+                                                              ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromKML(?), 4326), 3857)),
+                                                              ST_Buffer(ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromKML(?), 4326), 3857)), -15)
+                                                          ), 
+                                                      4326)::geometry))";
+                                        $pdo->prepare($sqlAnillo)->execute(["⚠️ Límite de Acta", "Zona de advertencia (15m)", $nuevo_id_mapa, $id_usuario_actual, $geomXML, $geomXML]);
+                                        $alertasDetectadas++;
+                                    }
+                                }
+                            }
+                        }
+                        libxml_clear_errors();
+                    } catch (Exception $e) { }
+                }
             }
 
-            $msgExtra = $alertasDetectadas > 0 ? " Se generaron $alertasDetectadas buffers de seguridad automáticos." : "";
-            header("Location: ../index.php?focus_map=" . $nuevo_id_mapa . "&status=success&msg=Mapa cargado." . $msgExtra);
+            $msgExtra = $alertasDetectadas > 0 ? " Se generaron $alertasDetectadas zonas de seguridad." : "";
+            header("Location: ../index.php?focus_map=" . $nuevo_id_mapa . "&status=success&msg=Mapa cargado correctamente." . $msgExtra);
             exit;
         }
 

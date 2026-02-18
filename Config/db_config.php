@@ -4,7 +4,7 @@
 // ==========================================================
 
 $host = "localhost"; 
-$dbname = "Millalemu"; 
+$dbname = "Millalemu6"; 
 $user = "postgres";          
 $password = "#sagitario18"; 
 
