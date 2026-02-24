@@ -47,6 +47,9 @@ try {
             $sql = "INSERT INTO public.usuario (nombre_usuario, email, contrasena_hash, tipo_usuario) VALUES (?, ?, ?, ?)";
             $pdo->prepare($sql)->execute([$user, empty($email) ? null : $email, $hash, $rol]);
             
+
+            
+
             echo json_encode(['success' => true]);
             break;
 
@@ -82,12 +85,12 @@ try {
             echo json_encode(['success' => true]);
             break;
 
-        case 'get_user_maps':
+        case 'get_user_maps': // Ahora trae las Zonas asignadas
             $id_usuario = $data['id_usuario'];
-            $sql = "SELECT um.id_mapa, m.nombre_mapa, um.fecha_inicio, um.fecha_fin 
-                    FROM public.usuario_mapa um
-                    JOIN public.mapa m ON um.id_mapa = m.id_mapa
-                    WHERE um.id_usuario = ?";
+            $sql = "SELECT uz.id_zona, z.nombre_zona 
+                    FROM public.usuario_zona uz
+                    JOIN public.zona z ON uz.id_zona = z.id_zona
+                    WHERE uz.id_usuario = ?";
             $stmt = $pdo->prepare($sql);
             $stmt->execute([$id_usuario]);
             echo json_encode(['success' => true, 'maps' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
@@ -95,42 +98,35 @@ try {
 
         case 'assign_map':
             $id_usuario = $data['id_usuario'];
-            $id_mapa    = $data['id_mapa'];
+            $id_zona    = $data['id_zona']; // Cambiado de id_mapa a id_zona
             $inicio     = $data['inicio'] ?: date('Y-m-d H:i:s');
-            $fin        = $data['fin'] ?: null;
 
-            if ($fin && strtotime($fin) <= strtotime($inicio)) throw new Exception("Fecha fin debe ser mayor a inicio");
-
-            $check = $pdo->prepare("SELECT 1 FROM public.usuario_mapa WHERE id_usuario = ? AND id_mapa = ?");
-            $check->execute([$id_usuario, $id_mapa]);
-            if ($check->fetch()) throw new Exception("Asignación ya existente. Usa el botón editar para modificar fechas.");
-
-            $sql = "INSERT INTO public.usuario_mapa (id_usuario, id_mapa, fecha_inicio, fecha_fin) VALUES (?, ?, ?, ?)";
-            $pdo->prepare($sql)->execute([$id_usuario, $id_mapa, $inicio, $fin]);
+            $sql = "INSERT INTO public.usuario_zona (id_usuario, id_zona, fecha_inicio) VALUES (?, ?, ?)";
+            $pdo->prepare($sql)->execute([$id_usuario, $id_zona, $inicio]);
             echo json_encode(['success' => true]);
             break;
 
         // --- MODIFICAR FECHAS DE ASIGNACIÓN ---
         case 'update_map_assignment':
             $id_usuario = $data['id_usuario'];
-            $id_mapa    = $data['id_mapa'];
+            $id_mapa    = $data['id_zona'];
             $inicio     = $data['inicio'] ?: date('Y-m-d H:i:s');
             $fin        = $data['fin'] ?: null;
 
             if ($fin && strtotime($fin) <= strtotime($inicio)) throw new Exception("Fecha fin debe ser mayor a inicio");
 
-            $sql = "UPDATE public.usuario_mapa SET fecha_inicio = ?, fecha_fin = ? WHERE id_usuario = ? AND id_mapa = ?";
+            $sql = "UPDATE public.usuario_zona SET fecha_inicio = ?, fecha_fin = ? WHERE id_usuario = ? AND id_zona = ?";
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([$inicio, $fin, $id_usuario, $id_mapa]);
+            $stmt->execute([$inicio, $fin, $id_usuario, $id_zona]);
             
             echo json_encode(['success' => true]);
             break;
 
         case 'unassign_map':
             $id_usuario = $data['id_usuario'];
-            $id_mapa    = $data['id_mapa'];
-            if ($id_usuario == 1 && $id_mapa == 1) throw new Exception("No se puede quitar el mapa base al Super Admin.");
-            $pdo->prepare("DELETE FROM public.usuario_mapa WHERE id_usuario = ? AND id_mapa = ?")->execute([$id_usuario, $id_mapa]);
+            $id_zona    = $data['id_zona'];
+            if ($id_usuario == 1 && $id_zona == 1) throw new Exception("No se puede quitar el mapa base al Super Admin.");
+            $pdo->prepare("DELETE FROM public.usuario_zona WHERE id_usuario = ? AND id_zona = ?")->execute([$id_usuario, $id_zona]);
             echo json_encode(['success' => true]);
             break;
 

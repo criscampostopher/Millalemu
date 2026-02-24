@@ -21,7 +21,8 @@ var poligonosPendiente = [];
 let pendienteActiva = null;
 let timerAlerta = null;
 let timerEspera = null;
-let asistidoConfirmado = false;
+let idPoligonoSilenciado = null; // (Guarda la ID, no un simple true/false)
+
 
 // --- PALETA DE COLORES DE RIESGO (Normalizados) ---
 const COLORES_ALTO_RIESGO = [
@@ -38,20 +39,31 @@ const COLORES_MEDIO_RIESGO = [
 
 // --- 1. INICIALIZAR MAPA ---
 function initMap() {
+
+
+
+
     map = L.map('map', { zoomControl: false }).setView([-35.4, -72.0], 9);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     const satelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
-        attribution: 'Tiles &copy; Esri', maxZoom: 19 
+        attribution: 'Tiles &copy; Esri', maxZoom: 19, crossOrigin: true
     }).addTo(map);
     
     const calles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
-        attribution: '&copy; OpenStreetMap', maxZoom: 19 
+        attribution: '&copy; OpenStreetMap', maxZoom: 19, crossOrigin: true
     });
 
+    // --- PLUGIN DE CAPTURA ---
+    if (L.simpleMapScreenshoter) {
+        window.screenshoter = L.simpleMapScreenshoter({
+            hidden: true // Oculto, lo activamos por código
+        }).addTo(map);
+    }
+
     layerFondo = L.featureGroup().addTo(map);    
-    layerManuales = L.layerGroup().addTo(map);    // Alertas Generales (SOS, Agua, Veg, Actas)
-    layerPendientes = L.layerGroup().addTo(map);  // Solo Pendientes
+    layerManuales = L.layerGroup()   // Alertas Generales (SOS, Agua, Veg, Actas)
+    layerPendientes = L.layerGroup()  // Solo Pendientes
 
     // Agregamos los DOS checkboxes al menú de Leaflet
     L.control.layers(
@@ -97,6 +109,11 @@ function renderizarMenuCapas() {
     const zonas = {};
     if (typeof LISTA_MAPAS !== 'undefined' && Array.isArray(LISTA_MAPAS)) {
         LISTA_MAPAS.forEach(m => {
+            // --- CORRECCIÓN AQUÍ: FILTRO DE ZONA 0 ---
+            // Si la zona es 0 (Sistema/Oculta), saltamos este mapa y no lo mostramos en la lista
+            if (m.id_zona == 0 || m.id_zona == '0') return; 
+            // -----------------------------------------
+
             if (!zonas[m.id_zona]) { zonas[m.id_zona] = { nombre: m.nombre_zona || 'Zona General', mapas: [] }; }
             zonas[m.id_zona].mapas.push(m);
         });
@@ -229,6 +246,8 @@ function cargarCapaVisual(mapaDatos) {
     const id = mapaDatos.id_mapa;
     if (capasActivas[id]) return; 
 
+
+
     const ruta = mapaDatos.ruta_archivo;
     if (!ruta || ruta === 'manual') {
         capasActivas[id] = { type: 'logic_only' };
@@ -236,7 +255,32 @@ function cargarCapaVisual(mapaDatos) {
         return; 
     }
 
-    const extension = ruta.split('.').pop().toLowerCase();
+    let extension = "";
+    
+    // Convertimos a minúsculas para evitar problemas de "GeoJSON" vs "geojson"
+    let tipoBD = (mapaDatos.tipo_mapa || "").toLowerCase().trim();
+
+    // 1. Prioridad: Lo que diga la Base de Datos
+    if (tipoBD === 'geojson' || tipoBD === 'json') {
+        extension = 'geojson';
+    } 
+    else if (tipoBD === 'kml' || tipoBD === 'kmz') {
+        extension = 'kml';
+    }
+    // 2. Si es la API (api_descargar_mapa.php), SIEMPRE es GeoJSON por defecto
+    else if (ruta.indexOf('api_descargar_mapa.php') !== -1) {
+        console.log("Map via API detected (" + id + "): Forcing GeoJSON");
+        extension = 'geojson';
+    }
+    // 3. Último recurso: Mirar la extensión del archivo (para uploads viejos)
+    else {
+        // split('?')[0] elimina parámetros extra como ?t=12345
+        extension = ruta.split('.').pop().split('?')[0].toLowerCase();
+    }
+
+    console.log(`Cargando mapa ${id}: Tipo=${extension} Ruta=${ruta}`);
+
+
     
     // --- KML (Estilos) ---
     if (extension === 'kml') {
@@ -279,22 +323,68 @@ function cargarCapaVisual(mapaDatos) {
         }).catch(e => console.error("Error KML:", e));
     } 
     
-    // --- GEOJSON (Procesamiento Inteligente) ---
+// --- GEOJSON (Procesamiento Inteligente) ---
     else if (extension === 'geojson' || extension === 'json') {
         fetch(ruta).then(r => r.json()).then(data => {
             const layer = L.geoJSON(data, {
-                style: function(feature) {
-                    let props = feature.properties;
-                    let rawFill = props.FILL_COLOR || props.Fill_Color || props.fill_color;
-                    let fillColorFinal = rawFill ? rgbToHex(rawFill) : null;
-                    let rawBorder = props.BORDER_COLOR || props.Border_Color || props.border_color;
-                    let borderColorFinal = rawBorder ? rgbToHex(rawBorder) : "#000000";
+                style: function (feature) {
+                    // ---------------------------------------------------------
+                    // 1. CORRECCIÓN DE VARIABLE (mapa -> mapaDatos)
+                    // ---------------------------------------------------------
+                    // AQUÍ ESTABA EL ERROR: Usábamos 'mapa' que no existía.
+                    var nombre = (mapaDatos.nombre_mapa || "").toLowerCase();
+                    var categoria = (mapaDatos.categoria || "").toLowerCase();
+                    
+                    var esPendiente = nombre.includes('pendiente') || categoria.includes('pendiente');
+                    var opacidadFinal = esPendiente ? 0.8 : 0.6; 
 
-                    if (!fillColorFinal) {
-                        fillColorFinal = "#E0A9E0"; // Default
-                        borderColorFinal = fillColorFinal;
+                    // ---------------------------------------------------------
+                    // 2. BUSCADOR DE PROPIEDADES
+                    // ---------------------------------------------------------
+                    var props = feature.properties || {};
+                    function getProp(clavesPosibles, valorDefecto) {
+                        var keys = Object.keys(props);
+                        for (var i = 0; i < keys.length; i++) {
+                            var keyReal = keys[i];
+                            var keyUpper = keyReal.toUpperCase();
+                            for (var j = 0; j < clavesPosibles.length; j++) {
+                                if (keyUpper === clavesPosibles[j]) return props[keyReal];
+                            }
+                        }
+                        return valorDefecto;
                     }
-                    return { fillColor: fillColorFinal, color: borderColorFinal, weight: 1, fillOpacity: 0.6 };
+
+                    // ---------------------------------------------------------
+                    // 3. EXTRACCIÓN DE ESTILOS
+                    // ---------------------------------------------------------
+                    var colorRelleno = getProp(['FILL_COLOR', 'FILL', 'COLOR'], null);
+                    var estiloRelleno = getProp(['FILL_STYLE', 'FILLSTYLE'], '');
+                    var colorBorde = getProp(['BORDER_COLOR', 'BORDER_C', 'STROKE', 'EDGE_COLOR'], '#3388ff');
+                    var anchoBorde = getProp(['BORDER_WIDTH', 'BORDER_W', 'WIDTH', 'STROKE-WIDTH'], 2);
+                    var estiloBorde = getProp(['BORDER_STYLE', 'STYLE'], '');
+
+                    if (estiloBorde && (estiloBorde.toString().toLowerCase() === 'null' || estiloBorde.toString().toLowerCase() === 'none')) {
+                        anchoBorde = 0;
+                    }
+
+                    // LÓGICA DE APAGADO DE RELLENO (ADIÓS MORADO)
+                    var activarRelleno = true;
+                    if (estiloRelleno && (estiloRelleno.toString().toLowerCase() === 'no fill' || estiloRelleno.toString().toLowerCase() === 'none')) {
+                        activarRelleno = false;
+                    }
+                    if (!colorRelleno) {
+                        activarRelleno = false;
+                    }
+
+                    return {
+                        fill: activarRelleno,
+                        fillColor: colorRelleno || '#ffffff',
+                        fillOpacity: activarRelleno ? opacidadFinal : 0, 
+                        color: colorBorde,
+                        weight: parseFloat(anchoBorde), 
+                        opacity: 1,
+                        dashArray: ''
+                    };
                 },
                 onEachFeature: (f, l) => {
                     let props = f.properties;
@@ -320,6 +410,41 @@ function cargarCapaVisual(mapaDatos) {
                 }
             });
             agregarCapaAlMapa(layer, id);
+            var nombre = (mapaDatos.nombre_mapa || "").toLowerCase();
+            var categoria = (mapaDatos.categoria || "").toLowerCase();
+            
+            var esPendiente = nombre.includes('pendiente') || categoria.includes('pendiente');
+            var esActa = nombre.includes('acta') || categoria.includes('acta');
+
+            // Etiquetamos la capa para que el sistema sepa quién es quién en el futuro
+            layer.esActa = esActa; 
+
+            setTimeout(function() { 
+                if (esPendiente) {
+                    // NIVEL 1 (FONDO): La pendiente se va atrás de todo
+                    layer.bringToBack();
+                } 
+                else if (esActa) {
+                    // NIVEL 3 (FRENTE): El Acta se trae adelante de todo
+                    layer.bringToFront();
+                } 
+                else {
+                    // NIVEL 2 (MEDIO): Uso de Suelo, Caminos, etc.
+                    // Primero lo traemos al frente (para que tape a la pendiente)
+                    layer.bringToFront();
+
+                    // TRUCO DE ORO:
+                    // Si acabamos de cargar un "Uso de Suelo", este tapará al "Acta" si ya estaba cargada.
+                    // Para evitar eso, buscamos si hay alguna Acta activa y la volvemos a poner encima.
+                    if (typeof capasActivas !== 'undefined') {
+                        Object.values(capasActivas).forEach(function(capaGuardada) {
+                            if (capaGuardada && capaGuardada.esActa === true) {
+                                capaGuardada.bringToFront(); // ¡Acta, recupera tu trono!
+                            }
+                        });
+                    }
+                }
+            }, 200);
         }).catch(e => console.error("Error GeoJSON:", e));
     }
 
@@ -331,13 +456,46 @@ function cargarCapaVisual(mapaDatos) {
     }
 }
 
+// Función auxiliar para añadir capas, enfocar y actualizar sistema
 function agregarCapaAlMapa(layer, id) {
-    layerFondo.addLayer(layer);
-    if (!ultimaPosicion) try { map.fitBounds(layer.getBounds()); } catch(e){}
-    capasActivas[id] = layer;
+    if (capasActivas[id]) return; // Evitar duplicados
+
+    // 1. Lógica Original (Vital para tu sistema)
+    if (layerFondo) layerFondo.addLayer(layer); // Agregamos al grupo principal
+    capasActivas[id] = layer;                   // Registramos en memoria
+
+    // 2. Lógica de ZOOM (Fusionada: Admin + Usuario sin GPS)
+    let zoomAdminAplicado = false;
+
+    // A) PRIORIDAD: Si venimos del Admin con un mapa específico (?focus_map=X)
+    if (typeof MAPA_ID_ACTUAL !== 'undefined' && parseInt(id) === parseInt(MAPA_ID_ACTUAL)) {
+        console.log("📍 Enfocando mapa solicitado por Admin: " + id);
+        zoomAdminAplicado = true;
+        
+        // Delay para asegurar que Leaflet renderizó todo antes de mover la cámara
+        setTimeout(() => {
+            try {
+                if (layer.getBounds) {
+                    map.fitBounds(layer.getBounds(), { 
+                        padding: [50, 50], 
+                        maxZoom: 16, 
+                        animate: true 
+                    });
+                }
+            } catch(e) { console.warn("Error enfocando mapa admin", e); }
+        }, 600);
+    }
+
+    // B) FALLBACK: Tu lógica original (Solo si no hay GPS y no se usó el zoom de Admin)
+    if (!zoomAdminAplicado && !ultimaPosicion) {
+        try { map.fitBounds(layer.getBounds()); } catch(e){}
+    }
+
+    // 3. Actualizar Panel de Alertas (Vital para que aparezcan en la lista)
     if (typeof actualizarAlertasVisibles === 'function') actualizarAlertasVisibles();
 }
 
+// --- 4. GESTIÓN DE ALERTAS (BD) ---
 // --- 4. GESTIÓN DE ALERTAS (BD) ---
 function cargarDatosDeAlertas() {
     fetch('Api/api_mapa.php?action=fetch_markers').then(r => r.json()).then(res => {
@@ -360,12 +518,20 @@ function cargarDatosDeAlertas() {
                         marcadoresPeligro.push(m);
                     } 
                     else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+                        // Estilo para depuración (luego lo puedes poner invisible opacity:0)
                         const m = L.geoJSON(geom, { style: { color: '#FF5722', weight: 5, fillOpacity: 0.2, dashArray: '10, 10' } });
+                        
                         m.tipo_geom = 'Polygon';
-                        m.eachLayer(l => asignarDatosComunes(l, props, isAdmin));
-                        m.id_mapa_asociado = props.id_mapa;
+                        
+                        // --- AQUÍ ESTABA EL ERROR: FALTABA ASIGNAR LA ID AL GRUPO ---
+                        m.id_db = props.id;          // <--- ¡LÍNEA AGREGADA!
                         m.nombre_alerta = props.nombre;
+                        m.id_mapa_asociado = props.id_mapa;
                         m.rawGeoJSON = geom; 
+                        
+                        // Asignar datos también a las capas internas (para clicks)
+                        m.eachLayer(l => asignarDatosComunes(l, props, isAdmin));
+                        
                         marcadoresPeligro.push(m);
                     }
                 } catch(e){ console.error(e); }
@@ -387,30 +553,51 @@ function asignarDatosComunes(layer, props, isAdmin) {
 
 // --- ACTUALIZAR VISIBILIDAD (MODIFICADO) ---
 function actualizarAlertasVisibles() {
-    // Limpiamos ambas capas visuales
+    // 1. Limpiamos el lienzo para redibujar según los filtros actuales
     layerManuales.clearLayers(); 
     layerPendientes.clearLayers(); 
 
     marcadoresPeligro.forEach(m => {
-        const idMapa = m.id_mapa_asociado;
+        // Obtenemos el ID del mapa (si es null o 0, asumimos 1 para manuales)
+        const idMapa = m.id_mapa_asociado || 1;
         
-        // Verificamos si la capa asociada está activa (o es el mapa general id=1)
+        // Verificamos si la capa asociada está activa en el menú
         if (capasActivas[idMapa] || idMapa == 1) {
             
-            // --- CAMBIO AQUÍ: CLASIFICACIÓN ---
-            // Si el nombre dice "PENDIENTE", va a la capa de Pendientes
-            // Si no, va a la capa Manuales (General)
+            // A) CASO PENDIENTES
             if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) {
-                if(m.addTo) m.addTo(layerPendientes); 
-                else layerPendientes.addLayer(m);
-            } else {
-                if(m.addTo) m.addTo(layerManuales); 
-                else {
-                    layerManuales.addLayer(m);
-                    // Si es un punto manual con radio, dibujamos el círculo también
-                    if (m.radio_custom > 0 && m.tipo_geom === 'Point') {
-                        L.circle(m.getLatLng(), { radius: m.radio_custom, color: '#e74c3c', fillColor: '#c0392b', fillOpacity: 0.3, weight: 1 }).addTo(layerManuales);
-                    }
+                layerPendientes.addLayer(m);
+            } 
+            // B) CASO ALERTAS MANUALES / NATIVO / AGUA
+            else {
+                // 1. Agregamos el PIN (Marcador)
+                layerManuales.addLayer(m);
+
+                // 2. DIBUJAMOS EL CÍRCULO (RADIO) SI TIENE
+                // Verificamos si es un punto y si tiene radio guardado
+                if (m.tipo_geom === 'Point' && m.radio_custom > 0) {
+                    
+                    // --- Recuperar Color según Nivel ---
+                    // Buscamos el nivel en las propiedades que guardamos en el marcador
+                    let nivel = (m.nivel || (m.feature && m.feature.properties && m.feature.properties.nivel) || "").toString().toLowerCase();
+                    let colorRadio = '#3388ff'; // Azul default
+
+                    if (nivel.includes('medio')) colorRadio = '#f1c40f';      // Amarillo
+                    else if (nivel.includes('alto')) colorRadio = '#e67e22';  // Naranja
+                    else if (nivel.includes('critico')) colorRadio = '#d63031'; // Rojo
+
+                    // Creamos el círculo
+                    const circulo = L.circle(m.getLatLng(), { 
+                        radius: m.radio_custom, 
+                        color: colorRadio, 
+                        fillColor: colorRadio, 
+                        fillOpacity: 0.2, 
+                        weight: 1,
+                        interactive: false // IMPORTANTE: Para que el clic pase al pin
+                    });
+
+                    // Lo agregamos a la misma capa que el pin
+                    layerManuales.addLayer(circulo);
                 }
             }
         }
@@ -452,30 +639,22 @@ function pointInRing(x, y, ring) {
 }
 
 
-// B) CHEQUEO GENERAL (BD) - CORREGIDO
 function checkPeligros(lat, lng) {
-    // 1. Si el botón GENERAL está apagado, NO hacemos nada.
     if (typeof IS_ADMIN !== 'undefined' && IS_ADMIN) return;
     if (!seguridadGeneralActiva) {
-        // Limpiamos alertas generales si se apaga el botón
-        const div = document.getElementById('alertas');
-        if (div && !div.innerHTML.includes("PENDIENTE")) div.style.display = 'none';
+        if (estadoAlertaActual > 0 && estadoAlertaActual < 3) cerrarAlertaMaestra();
         return;
     }
-    
-    // Si ya hay una pendiente sonando (prioridad), no mostramos alertas generales
-    if (pendienteActiva) return;
 
-    const divAlertas = document.getElementById('alertas'); 
-    let dangerDetected = false;
-    let htmlAlertas = "";
-    
-    marcadoresPeligro.forEach(m => {
-        // 2. FILTRO CLAVE: Si es Pendiente, LA IGNORAMOS (el otro botón se encarga)
-        if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) return;
+    // Nota: Eliminamos el "if (estadoAlertaActual === 3) return;" para permitir que detecte 
+    // vegetación aunque la pendiente esté silenciada (pero con menor prioridad visual).
+
+    let peligroDetectado = false;
+
+    for (let m of marcadoresPeligro) {
+        if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) continue;
 
         let isDanger = false;
-        
         if (m.tipo_geom === 'Point') {
             const distancia = map.distance([lat, lng], m.getLatLng());
             const radioAlerta = (m.radio_custom > 0) ? m.radio_custom : 15; 
@@ -488,72 +667,86 @@ function checkPeligros(lat, lng) {
             }
         }
 
-        if(isDanger) {
-            dangerDetected = true;
-            htmlAlertas += `<div class="alerta-card"><i class="fas fa-exclamation-triangle"></i><br>⚠️ ZONA DE PELIGRO<br><span style="font-size:0.9rem;">${m.nombre_alerta}</span></div>`;
-        }
-    });
+        if (isDanger) {
+            peligroDetectado = true;
+            let nombre = m.nombre_alerta.toUpperCase();
+            let titulo = "PRECAUCIÓN";
+            let color = "#f1c40f"; 
+            let nivel = 1;         
 
-    if (dangerDetected) {
-        divAlertas.innerHTML = htmlAlertas;
-        divAlertas.style.display = 'block';
-        
-        // SONIDO GENERAL
-        const now = Date.now();
-        if (now - lastSoundTime > 5000) { 
-            const audio = document.getElementById('alertaAudio');
-            if(audio) audio.play().catch(e => console.log("Falta click usuario"));
-            lastSoundTime = now; 
+            if (nombre.includes("NATIVO") || nombre.includes("VEGETACION")) {
+                titulo = "ZONA PROTEGIDA"; color = "#2ecc71"; 
+            } else if (nombre.includes("ACTA") || nombre.includes("FAENA")) {
+                titulo = "LÍMITE DE ACTA"; color = "#e67e22"; nivel = 2; 
+            } else if (nombre.includes("AGUA")) {
+                titulo = "PROTECCIÓN AGUA"; color = "#3498db"; 
+            }
+
+            mostrarAlertaMaestra(titulo, `Estás en: ${m.nombre_alerta}`, color, nivel, (m.id_db || m.id));
+            break; 
         }
-    } else {
-        // Solo ocultamos si no hay pendiente activa
-        if (!divAlertas.innerHTML.includes("PENDIENTE")) divAlertas.style.display = 'none';
+    }
+
+    // --- LÓGICA DE RESETEO SEGURA ---
+    if (!peligroDetectado) {
+        // Cerramos alerta visual si era de nivel bajo
+        if (estadoAlertaActual > 0 && estadoAlertaActual < 3) {
+            cerrarAlertaMaestra();
+        }
+
+        // SOLO SI NO HAY PENDIENTE ACTIVA Y NO HAY PELIGRO GENERAL...
+        // ENTENDEMOS QUE EL USUARIO ESTÁ EN ZONA SEGURA Y RESETEAMOS.
+        if (!pendienteActiva) {
+            idsSilenciados = []; 
+        }
     }
 }
 
-// C) CHEQUEO PENDIENTES (CORREGIDO)
 function checkPendientes(lat, lng) {
-    // 1. Si el botón PENDIENTE está apagado, NO hacemos nada y reseteamos.
     if (typeof IS_ADMIN !== 'undefined' && IS_ADMIN) return;
     if (!seguridadPendienteActiva) {
-        if (pendienteActiva) detenerLoopAlerta();
+        if (pendienteActiva) cerrarAlertaMaestra();
         return;
     }
-    
-    // Si el usuario ya confirmó asistencia, no molestamos más.
-    if (asistidoConfirmado) return;
 
-    let alertaDetectada = null;
-
+    let candidatos = [];
     for (let m of marcadoresPeligro) {
-        // Solo buscamos polígonos que digan "PENDIENTE"
         if (m.tipo_geom === 'Polygon' && m.nombre_alerta && m.nombre_alerta.toUpperCase().includes('PENDIENTE')) {
-            
-            // Usamos SCAN RECURSIVO para encontrar los polígonos reales
-            const anillos = scanCapasRecursivo(m);
+            const anillos = scanCapasRecursivo(m); 
             for (let anillo of anillos) {
                 if (isPointInRing(lat, lng, anillo)) {
-                    alertaDetectada = m;
-                    break;
+                    let puntaje = m.nombre_alerta.toUpperCase().includes("CRÍTICA") ? 2 : 1;
+                    // Usamos m.id_db como identificador único y estable
+                    candidatos.push({ marcador: m, nivel: puntaje, id: (m.id_db || m.id) });
+                    break; 
                 }
             }
         }
-        if (alertaDetectada) break;
     }
 
-    // GESTIÓN DE ESTADO (ENTRAR / SALIR)
-    if (alertaDetectada) {
-        // Si acabamos de entrar (no había activa antes)
-        if (!pendienteActiva) {
-            pendienteActiva = alertaDetectada;
-            const nivel = pendienteActiva.nombre_alerta.toUpperCase().includes("CRÍTICA") ? "ALTO" : "MEDIO";
-            iniciarLoopAlerta(nivel);
-        }
-        // Si ya había una activa, no hacemos nada (el loop de sonido ya está corriendo)
+    let ganador = null;
+    if (candidatos.length > 0) {
+        candidatos.sort((a, b) => b.nivel - a.nivel);
+        ganador = candidatos[0]; 
+    }
+
+    if (ganador) {
+        pendienteActiva = ganador.marcador;
+        const esCritica = ganador.marcador.nombre_alerta.toUpperCase().includes("CRÍTICA");
+        
+        mostrarAlertaMaestra(
+            esCritica ? "PELIGRO DE VUELCO" : "PENDIENTE MEDIA",
+            "Zona de Pendiente Detectada.",
+            esCritica ? "#d63031" : "#e67e22",
+            3,
+            ganador.id 
+        );
     } else {
-        // Si no detectamos nada pero había una activa -> SALIMOS
+        // ZONA SEGURA DE PENDIENTES
         if (pendienteActiva) {
-            detenerLoopAlerta();
+            pendienteActiva = null;
+            cerrarAlertaMaestra();
+            // Nota: No borramos la lista de silenciados aquí todavía
         }
     }
 }
@@ -585,18 +778,19 @@ function isPointInRing(lat, lng, ring) {
     return inside;
 }
 
-// FUNCIÓN DE SONIDO Y VISUALIZACIÓN (CORREGIDA)
 function iniciarLoopAlerta(nivel) {
-    // Doble chequeo de seguridad
-    if (!seguridadPendienteActiva || asistidoConfirmado) return;
+    if (!seguridadPendienteActiva) return;
 
-    const colorFondo = (nivel === "ALTO") ? "#c0392b" : "#e67e22"; // Rojo o Naranja
+    const colorFondo = (nivel === "ALTO") ? "#c0392b" : "#e67e22";
     const titulo = (nivel === "ALTO") ? "PENDIENTE CRÍTICA" : "PENDIENTE MEDIA";
     
     const divAlertas = document.getElementById('alertas');
+    
+    // Forzamos limpieza para asegurar que el navegador detecte el cambio de contenido
+    divAlertas.innerHTML = ""; 
     divAlertas.style.display = 'block';
     
-    // HTML DE LA ALERTA GRANDE
+    // Inyectamos el nuevo mensaje
     divAlertas.innerHTML = `
         <div class="alerta-card" style="background:${colorFondo}; width: 90%; margin: 10px auto; padding: 20px;">
             <i class="fas fa-mountain" style="font-size:3rem; margin-bottom:15px; color:white;"></i><br>
@@ -608,47 +802,60 @@ function iniciarLoopAlerta(nivel) {
         </div>
     `;
 
-    // REPRODUCCIÓN DE SONIDO (FORZADA)
+    // Gestión del Audio (Sin interrupciones si ya está sonando)
     const audio = document.getElementById('alertaAudio');
     if (audio) {
-        audio.currentTime = 0; // Reiniciar audio
-        audio.loop = true;     // Activar bucle
-        
-        // Intentar reproducir con promesa para capturar errores
-        var playPromise = audio.play();
-        if (playPromise !== undefined) {
-            playPromise.then(_ => {
-                // Reproducción iniciada correctamente
-            })
-            .catch(error => {
-                console.log("El navegador bloqueó el audio. El usuario debe interactuar primero.");
-            });
+        // Si el audio estaba pausado o terminó, lo iniciamos. 
+        // Si ya estaba sonando, lo dejamos seguir para no hacer un corte feo, 
+        // pero aseguramos que esté en loop.
+        if (audio.paused) {
+            audio.currentTime = 0;
+            audio.loop = true;
+            audio.play().catch(e => console.log("Audio background bloqueado"));
         }
     }
-
-    // NOTA: He quitado el setTimeout que apagaba la alerta a los 15s.
-    // La alerta de pendiente es CRÍTICA, no debe desaparecer sola hasta que:
-    // 1. El usuario salga de la zona.
-    // 2. El usuario confirme asistencia.
 }
 
 function detenerLoopAlerta() {
-    pendienteActiva = null; asistidoConfirmado = false;
-    clearTimeout(timerAlerta); clearTimeout(timerEspera);
+    pendienteActiva = null; 
+    // CORRECCIÓN: Borramos la línea "asistidoConfirmado = false;"
+    
+    clearTimeout(timerAlerta); 
+    clearTimeout(timerEspera);
+    
     const audio = document.getElementById('alertaAudio');
-    audio.pause(); audio.loop = false;
+    if (audio) { 
+        audio.pause(); 
+        audio.loop = false; 
+    }
     
     const div = document.getElementById('alertas');
-    if(div.innerHTML.includes('PENDIENTE')) div.style.display = 'none';
+    if(div && div.innerHTML.includes('PENDIENTE')) div.style.display = 'none';
 }
 
 function confirmarAsistencia() {
-    asistidoConfirmado = true;
-    clearTimeout(timerAlerta);
+    if (pendienteActiva) {
+        // Guardamos la ID para que este polígono específico se calle
+        idPoligonoSilenciado = pendienteActiva.id_db;
+        
+        // Detenemos sonido y ocultamos alerta
+        detenerLoopAlertaVisualmente(); 
+        
+        alert("✅ Asistencia confirmada.");
+    }
+}
+
+// Pequeña ayuda para apagar visuales sin perder la referencia de pendienteActiva
+function detenerLoopAlertaVisualmente() {
+    clearTimeout(timerAlerta); 
+    clearTimeout(timerEspera);
     const audio = document.getElementById('alertaAudio');
-    audio.pause(); audio.loop = false;
-    document.getElementById('alertas').style.display = 'none';
-    alert("✅ Asistencia confirmada.");
+    if (audio) { 
+        audio.pause(); 
+        audio.loop = false; 
+    }
+    const div = document.getElementById('alertas');
+    if(div) div.style.display = 'none';
 }
 
 // --- 6. EVENTOS DE INTERFAZ ---
@@ -666,10 +873,45 @@ window.toggleSeguridad = function(tipo) {
     }
 };
 
-window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 0) {
-    const data = { action: 'add_marker', lat: ll.lat, lng: ll.lng, nombre: nom, descripcion: desc, nivel: nivel, radio: radio, id_mapa: id_destino };
-    fetch('Api/api_mapa.php', { method:'POST', body:JSON.stringify(data) }).then(r=>r.json()).then(res=>{ if(res.success) { cargarDatosDeAlertas(); alert("Guardado."); } });
+window.saveMarker = function(ll, nom, desc, nivel, radio, id_destino = 1) { // <--- CAMBIO AQUÍ (0 por 1)
+    const data = { 
+        action: 'add_marker', 
+        lat: ll.lat, 
+        lng: ll.lng, 
+        nombre: nom, 
+        descripcion: desc, 
+        nivel: nivel, 
+        radio: radio, 
+        id_mapa: id_destino 
+    };
+    
+    // Feedback visual opcional
+    const btn = document.querySelector('.btn-upload');
+    if(btn) btn.innerText = "Guardando...";
+
+    fetch('Api/api_mapa.php', { 
+        method:'POST', 
+        body:JSON.stringify(data) 
+    })
+    .then(r => r.json())
+    .then(res => { 
+        if(btn) btn.innerText = "Guardar"; // Restaurar botón
+        
+        if(res.success) { 
+            cargarDatosDeAlertas(); 
+            alert("✅ Guardado."); 
+        } else {
+            alert("❌ Error: " + (res.error || "Desconocido"));
+        }
+    })
+    .catch(err => {
+        if(btn) btn.innerText = "Guardar";
+        console.error(err);
+        alert("Error de conexión");
+    });
 };
+
+
 window.borrarMarcador = function(id) { if(confirm("¿Eliminar?")) fetch('Api/api_mapa.php', { method: 'POST', body: JSON.stringify({ action: 'delete_marker', id: id }) }).then(r=>r.json()).then(res=>{ if(res.success) cargarDatosDeAlertas(); }); };
 window.reportarUser = function() {
     const msg = prompt("⚠️ REPORTE SOS"); if(!msg) return;
@@ -688,62 +930,502 @@ window.iniciarRastreoGPS = function() {
 };
 window.centrarEnUsuario = function() { if(ultimaPosicion && map) map.setView(ultimaPosicion, 16, {animate: true}); };
 function setupUIEvents() {
-    const form = document.getElementById('markerFormContainer');
+    const formContainer = document.getElementById('markerFormContainer'); // El div que contiene el form
+    const form = document.getElementById('markerForm'); // El formulario dentro
     let currentLatLng;
-    document.getElementById('cancelMarker').onclick = () => { form.style.display='none'; document.getElementById('markerForm').reset(); };
+
+    // A. BOTÓN CANCELAR
+    const btnCancel = document.getElementById('cancelMarker');
+    if (btnCancel) {
+        btnCancel.onclick = () => { 
+            formContainer.style.display = 'none'; 
+            form.reset(); 
+        };
+    }
+
+    // B. CLIC DERECHO (ABRIR FORMULARIO)
     map.on('contextmenu', function(e) {
-        if (!IS_ADMIN) return; 
+        if (typeof IS_ADMIN !== 'undefined' && !IS_ADMIN) return; 
         currentLatLng = e.latlng;
+
+        // TRUCO: Como el HTML tiene un <select id="selectorMapaForm"> pero ya no usas esa lógica,
+        // lo llenamos con una opción falsa para que no se vea feo o vacío.
         const selector = document.getElementById('selectorMapaForm');
-        if(selector) {
-            selector.innerHTML = ''; 
-            if(typeof LISTA_MAPAS !== 'undefined') {
-                LISTA_MAPAS.forEach(m => {
-                    let opt = document.createElement('option'); opt.value = m.id_mapa; opt.text = `[${m.categoria}] ${m.nombre_mapa}`;
-                    if (m.id_mapa == 1) opt.selected = true; selector.appendChild(opt);
-                });
-            }
+        if (selector) {
+            selector.innerHTML = '<option value="1">Mapa General</option>';
         }
-        form.style.display = 'block';
+
+        formContainer.style.display = 'block'; // Mostrar el div contenedor
     });
-    document.getElementById('markerForm').onsubmit = (e) => {
+
+    // C. ENVIAR FORMULARIO (GUARDAR)
+    form.onsubmit = (e) => {
         e.preventDefault(); 
         if (!currentLatLng) return;
-        saveMarker(currentLatLng, document.getElementById('popupNombre').value, document.getElementById('popupDesc').value, document.getElementById('popupIcon').value, document.getElementById('popupRadio').value, document.getElementById('selectorMapaForm').value); 
-        form.style.display='none';
+
+        // AQUÍ ESTÁ LA CLAVE: Mapear tus IDs exactos del HTML
+        const nombre = document.getElementById('popupNombre').value;
+        const desc   = document.getElementById('popupDesc').value;
+        const nivel  = document.getElementById('popupIcon').value; // Tu HTML usa 'popupIcon' para el Nivel
+        const radio  = document.getElementById('popupRadio').value || 15;
+        
+        // Llamamos a saveMarker forzando el ID 1
+        saveMarker(
+            currentLatLng, 
+            nombre, 
+            desc, 
+            nivel, 
+            radio, 
+            1 // <--- Forzamos ID 1 porque ya no gestionas mapas/usuarios complejos
+        ); 
+        
+        formContainer.style.display = 'none';
+        form.reset();
     };
+
+    // D. BOTÓN BORRAR TODO
     const btnBorrar = document.getElementById('borrarMarcadores');
-    if(btnBorrar) btnBorrar.onclick = () => { if(confirm("¿RESETEAR TODO?")) fetch('Api/api_mapa.php?action=delete_all', { method: 'POST' }).then(() => { cargarDatosDeAlertas(); alert("Reset completo."); }); };
+    if(btnBorrar) {
+        btnBorrar.onclick = () => { 
+            if(confirm("¿RESETEAR TODO?")) { 
+                fetch('Api/api_mapa.php?action=delete_all', { method: 'POST' })
+                .then(r => r.json())
+                .then(res => { 
+                    if(res.success) { cargarDatosDeAlertas(); alert("Reset completo."); }
+                }); 
+            }
+        };
+    }
 }
+// --- FUNCIÓN DE DESCARGA OFFLINE "FULL PACK" ---
 window.descargarZona = function(idZona) {
     const urls = [];
-    LISTA_MAPAS.forEach(m => { if (m.id_zona == idZona && m.ruta_archivo && m.ruta_archivo !== 'manual') urls.push(m.ruta_archivo); });
-    if (urls.length > 0) {
-        document.getElementById('loader').style.display = 'block';
-        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-            navigator.serviceWorker.controller.postMessage({ action: 'CACHE_NEW_ZONE', urls: urls, zoneId: idZona });
-        } else { alert("Recarga la página."); document.getElementById('loader').style.display = 'none'; }
-    } else { alert("Zona vacía."); }
-};
-function setupServiceWorkerListener() {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.addEventListener('message', event => {
-            if(event.data.action === 'ZONE_CACHED_OK'){
-                document.getElementById('loader').style.display = 'none';
-                alert("✅ Zona descargada.");
+
+    // 1. RECOLECTAR MAPAS DE LA ZONA (GeoJSON, KML)
+    if (typeof LISTA_MAPAS !== 'undefined') {
+        LISTA_MAPAS.forEach(m => { 
+            // Guardamos el mapa si es de esta zona y tiene ruta válida
+            if (m.id_zona == idZona && m.ruta_archivo && m.ruta_archivo !== 'manual') {
+                urls.push(m.ruta_archivo);
             }
         });
     }
+
+    // 2. RECURSOS VITALES (APP SHELL)
+    // Estos archivos son obligatorios para que la pantalla se dibuje sin internet
+    const recursosSistema = [
+        'index.php',             // Tu visor principal
+        'script_visor.js',       // La lógica (GPS, Alertas)
+        'style_visor.css',       // Estilos del visor
+        'style.css',             // Estilos generales
+        // Iconos de Marcadores (Para que no se vean rotos)
+        'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
+        'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+        'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+        'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png',
+        'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-shadow.png',
+        // Librerías Externas (Si usas versiones online)
+        'https://unpkg.com/leaflet@1.7.1/dist/leaflet.css',
+        'https://unpkg.com/leaflet@1.7.1/dist/leaflet.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css'
+    ];
+    
+    // Agregamos recursos al paquete
+    urls.push(...recursosSistema);
+
+    // 3. LA BASE DE DATOS DE ALERTAS (SNAPSHOT)
+    // Esto es lo más importante: Guardamos la respuesta de la API
+    urls.push('Api/api_mapa.php?action=fetch_markers');
+
+    if (urls.length > 0) {
+        document.getElementById('loader').style.display = 'block';
+        
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            console.log("Iniciando descarga de zona...", urls);
+            
+            // Enviamos la orden al Service Worker
+            navigator.serviceWorker.controller.postMessage({ 
+                action: 'CACHE_NEW_ZONE', 
+                urls: urls, 
+                zoneId: idZona 
+            });
+
+        } else { 
+            alert("⚠️ El modo Offline no está listo. Recarga la página e inténtalo de nuevo."); 
+            document.getElementById('loader').style.display = 'none'; 
+        }
+    } else { 
+        alert("Esta zona no tiene mapas para descargar."); 
+    }
+};
+function setupServiceWorkerListener() {
+    if ('serviceWorker' in navigator) {
+        
+        // 1. REGISTRO ROBUSTO
+        navigator.serviceWorker.register('sw.js')
+            .then(reg => {
+                // Si hay un SW esperando (actualización), forzamos que tome el control
+                if (reg.waiting) {
+                    reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                }
+                console.log("✅ SW v10 Registrado.");
+                
+                // Actualizamos la página automáticamente si detectamos que el SW cambió
+                reg.onupdatefound = () => {
+                    const installingWorker = reg.installing;
+                    installingWorker.onstatechange = () => {
+                        if (installingWorker.state === 'installed') {
+                            if (navigator.serviceWorker.controller) {
+                                console.log("Nueva versión disponible. Recargando...");
+                                window.location.reload();
+                            }
+                        }
+                    };
+                };
+            })
+            .catch(err => console.error("❌ Error SW:", err));
+
+        // 2. ESCUCHAR MENSAJES (Zona Descargada)
+        navigator.serviceWorker.addEventListener('message', event => {
+            if(event.data.action === 'ZONE_CACHED_OK'){
+                document.getElementById('loader').style.display = 'none';
+                alert("✅ ZONA DESCARGADA.\nAhora funcionará Offline.");
+            }
+        });
+
+        // 3. DETECTAR CAMBIO DE CONTROLADOR
+        let refreshing;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (refreshing) return;
+            window.location.reload();
+            refreshing = true;
+        });
+
+    } else {
+        console.warn("Navegador sin soporte Offline.");
+    }
+}
+
+// --- FUNCIONES DEL PANEL DE DIAGNÓSTICO ---
+
+// --- AUTO-ARRANQUE ---
+document.addEventListener('DOMContentLoaded', function() {
+    // 1. Iniciar Service Worker
+    setupServiceWorkerListener();
+    
+    // 2. Iniciar GPS
+    iniciarGPS();
+
+    // 3. Si venimos desde el Admin con un mapa específico (?focus_map=X)
+    if (typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL > 0) {
+        console.log("Auto-cargando mapa ID:", MAPA_ID_ACTUAL);
+        
+        // Buscamos los datos de ese mapa en la lista global
+        const mapaObjetivo = LISTA_MAPAS.find(m => parseInt(m.id_mapa) === parseInt(MAPA_ID_ACTUAL));
+        
+        if (mapaObjetivo) {
+            cargarCapaVisual(mapaObjetivo);
+        } else {
+            console.warn("El mapa solicitado no está asignado a este usuario.");
+        }
+    }
+});
+
+
+
+
+
+
+
+// =============================================================================
+// SISTEMA VISUAL DE ALERTAS (CORREGIDO: ANTI-FLASH + MEMORIA MÚLTIPLE)
+// =============================================================================
+let estadoAlertaActual = 0; 
+let idAlertaEnPantalla = null; 
+let idsSilenciados = []; // Lista de alertas aceptadas
+let audioAlerta = new Audio('sounds/alert.mp3'); 
+audioAlerta.loop = true; 
+
+function mostrarAlertaMaestra(titulo, mensaje, color, nivel, idUnico) {
+    // 1. CHEQUEO DE SILENCIO: Si ya aceptaste esta alerta, no la mostramos.
+    if (idsSilenciados.includes(idUnico)) return;
+
+    // 2. ANTI-FLASH: Si ya estamos mostrando ESTA MISMA alerta y nivel, NO HACEMOS NADA.
+    // (Esto evita que parpadee o reinicie el audio cada segundo)
+    if (idAlertaEnPantalla === idUnico && estadoAlertaActual === nivel) return;
+
+    // 3. PRIORIDAD: Si hay una alerta más grave sonando, no la interrumpimos.
+    if (nivel < estadoAlertaActual && estadoAlertaActual > 0) return;
+
+    // Actualizamos estado
+    estadoAlertaActual = nivel;
+    idAlertaEnPantalla = idUnico; 
+
+    // 4. DIBUJAR INTERFAZ
+    let overlay = document.getElementById('alerta-maestra-overlay');
+    if (!overlay) {
+        crearModalAlertaHTML();
+        overlay = document.getElementById('alerta-maestra-overlay');
+    }
+
+    document.getElementById('alerta-maestra-card').style.borderTop = `15px solid ${color}`;
+    document.getElementById('alerta-maestra-titulo').innerText = titulo;
+    document.getElementById('alerta-maestra-titulo').style.color = color;
+    document.getElementById('alerta-maestra-mensaje').innerText = mensaje;
+    
+    let btn = document.getElementById('btn-maestra-confirmar');
+    btn.style.backgroundColor = color;
+    btn.innerText = (nivel === 3) ? "¡ENTENDIDO, SALIENDO!" : "ENTENDIDO";
+
+    overlay.style.display = 'flex';
+    
+    if (audioAlerta.paused) {
+        audioAlerta.currentTime = 0;
+        audioAlerta.play().catch(e => {});
+    }
+}
+
+function cerrarAlertaMaestra() {
+    let overlay = document.getElementById('alerta-maestra-overlay');
+    if (overlay) overlay.style.display = 'none';
+    audioAlerta.pause();
+    
+    // Al cerrar, agregamos el ID actual a la lista de silenciados
+    if (idAlertaEnPantalla && !idsSilenciados.includes(idAlertaEnPantalla)) {
+        idsSilenciados.push(idAlertaEnPantalla);
+    }
+    
+    estadoAlertaActual = 0; 
+    idAlertaEnPantalla = null;
+}
+
+function crearModalAlertaHTML() {
+    const html = `
+    <div id="alerta-maestra-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:99999; justify-content:center; align-items:center; flex-direction:column;">
+        <div id="alerta-maestra-card" style="background:white; width:90%; max-width:380px; padding:30px; border-radius:20px; text-align:center;">
+            <i class="fas fa-exclamation-triangle" style="font-size:4.5rem; margin-bottom:20px; color:#555;"></i>
+            <h1 id="alerta-maestra-titulo" style="margin:0; font-size:2.2rem; font-weight:900; text-transform:uppercase;">PELIGRO</h1>
+            <p id="alerta-maestra-mensaje" style="font-size:1.3rem; color:#444; margin:20px 0;">...</p>
+            <button id="btn-maestra-confirmar" onclick="cerrarAlertaMaestra()" style="width:100%; padding:15px; border:none; color:white; font-size:1.2rem; font-weight:bold; border-radius:12px; cursor:pointer;">ENTENDIDO</button>
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
 }
 
 
 
 
 
-window.abrirPIV = function () {
-  const id = (typeof MAPA_ID_ACTUAL !== 'undefined' && MAPA_ID_ACTUAL) ? MAPA_ID_ACTUAL : 0;
-  const url = id ? `piv_formulario.php?id_mapa=${id}` : `piv_formulario.php`;
-  window.open(url, '_blank');
+// =============================================================================
+// LÓGICA DE CAPTURA PIV (FOTO Y RECORTE)
+// =============================================================================
+
+function obtenerIdMapaParaCaptura() {
+    if (typeof MAPA_ID_ACTUAL !== 'undefined' && Number(MAPA_ID_ACTUAL) > 0) {
+        return Number(MAPA_ID_ACTUAL);
+    }
+    const checked = document.querySelectorAll('#layers-container input[type="radio"]:checked, #layers-container input[type="checkbox"]:checked');
+    for (const input of checked) {
+        const v = Number(input.value || 0);
+        if (v > 0 && v !== 1) return v;
+    }
+    if (checked.length > 0) return Number(checked[0].value || 0);
+    return 0;
+}
+
+function getCaptureStepKey(mapaId) {
+    return `piv_capture_step_${mapaId}`;
+}
+
+function getCurrentCaptureStep(mapaId) {
+    const raw = sessionStorage.getItem(getCaptureStepKey(mapaId));
+    const step = Number(raw || 1);
+    return (step === 2) ? 2 : 1;
+}
+
+function setCurrentCaptureStep(mapaId, step) {
+    if (step === 2) {
+        sessionStorage.setItem(getCaptureStepKey(mapaId), '2');
+    } else {
+        sessionStorage.removeItem(getCaptureStepKey(mapaId));
+    }
+}
+
+function actualizarBotonCaptura(idMapa) {
+    const btn = document.getElementById('btn-captura-piv');
+    if (!btn) return;
+    const mapaId = Number(idMapa || 0) || obtenerIdMapaParaCaptura();
+    const step = mapaId ? getCurrentCaptureStep(mapaId) : 1;
+    if (step === 1) {
+        btn.innerHTML = '<i class="fas fa-camera"></i><span>Tomar foto 1</span>';
+        btn.title = 'Tomar primera foto para PIV';
+    } else {
+        btn.innerHTML = '<i class="fas fa-camera"></i><span>Tomar foto 2</span>';
+        btn.title = 'Tomar segunda foto y abrir formulario PIV';
+    }
+}
+
+function toDataUrl(result) {
+    return new Promise((resolve, reject) => {
+        if (typeof result === 'string') { resolve(result); return; }
+        if (result && typeof result.toDataURL === 'function') {
+            try { resolve(result.toDataURL('image/jpeg', 0.9)); return; } catch (e) { reject(e); return; }
+        }
+        if (result instanceof Blob) {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result || ''));
+            fr.onerror = reject;
+            fr.readAsDataURL(result);
+            return;
+        }
+        reject(new Error('Formato de captura no soportado'));
+    });
+}
+
+window.capturarMapaMagico = function(idMapa) {
+    const mapaId = Number(idMapa || 0) || obtenerIdMapaParaCaptura();
+    if (!mapaId) { alert("No se encontro un mapa seleccionado."); return; }
+    if (!window.screenshoter) { alert("No se pudo inicializar la herramienta de captura."); return; }
+
+    const step = getCurrentCaptureStep(mapaId);
+    const btn = document.getElementById('btn-captura-piv');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if(btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparando...';
+
+    const controls = document.querySelector('.leaflet-control-container');
+    if(controls) controls.style.display = 'none';
+
+    // Se agregan 800ms de espera para que el mapa estabilice sus capas 3D antes de la foto
+    setTimeout(() => {
+        window.screenshoter.takeScreen('image')
+            .then((result) => toDataUrl(result))
+            .then((base64Image) => {
+                if(btn) btn.innerHTML = originalHTML;
+                if(controls) controls.style.display = 'block';
+                startCrop(base64Image, mapaId, step);
+            })
+            .catch((e) => {
+                if(btn) btn.innerHTML = originalHTML;
+                if(controls) controls.style.display = 'block';
+                alert("Error interno del mapa al capturar: " + e.toString());
+            });
+    }, 800);
 };
 
+window.iniciarCapturaPIV = window.capturarMapaMagico;
+
+let cropperInstance = null;
+let cropMapaId = 0;
+let cropStep = 0;
+
+function setupCropper() {
+    if (!document.getElementById('cropperModal')) {
+        const div = document.createElement('div');
+        div.id = 'cropperModal';
+        div.style.cssText = 'display:none; position:fixed; z-index:10000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.9); flex-direction:column; align-items:center; justify-content:center;';
+        
+        // El fondo a #333 y el display:block ayudan a que la imagen no colapse a 0 píxeles
+        div.innerHTML = `
+            <div style="width:90%; height:80%; background:#333; display:block; overflow:hidden; border-radius:8px;">
+                <img id="imageToCrop" style="max-width:100%; display:block;">
+            </div>
+            <div style="margin-top:15px; display:flex; gap:15px;">
+                <button onclick="finishCrop()" style="padding:12px 24px; background:#27ae60; color:white; border:none; border-radius:50px; font-size:16px; cursor:pointer; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.3);"><i class="fas fa-crop-alt"></i> Guardar Recorte</button>
+                <button onclick="closeCrop()" style="padding:12px 24px; background:#c0392b; color:white; border:none; border-radius:50px; font-size:16px; cursor:pointer; font-weight:bold; box-shadow:0 4px 10px rgba(0,0,0,0.3);">Cancelar</button>
+            </div>`;
+        document.body.appendChild(div);
+    }
+}
+
+window.startCrop = function(base64, id, step) {
+    cropMapaId = id; cropStep = step;
+    setupCropper();
+    
+    const modal = document.getElementById('cropperModal');
+    const img = document.getElementById('imageToCrop');
+    
+    modal.style.display = 'flex';
+    
+    if (cropperInstance) {
+        cropperInstance.destroy();
+        cropperInstance = null;
+    }
+    
+    img.src = '';
+    
+    // EL SEGURO DE VIDA: Se espera a que cargue la imagen antes de iniciar Cropper
+    img.onload = function() {
+        if (typeof Cropper === 'undefined') { 
+            alert("Cargando herramienta de recorte..."); 
+            return; 
+        }
+        cropperInstance = new Cropper(img, { 
+            viewMode: 1, 
+            autoCropArea: 0.9, 
+            responsive: true, 
+            background: true 
+        });
+    };
+    
+    img.src = base64;
+};
+
+window.closeCrop = function() {
+    document.getElementById('cropperModal').style.display = 'none';
+    if (cropperInstance) { cropperInstance.destroy(); cropperInstance = null; }
+};
+
+window.finishCrop = function() {
+    if (!cropperInstance) return;
+    const canvas = cropperInstance.getCroppedCanvas({ maxWidth: 1920, maxHeight: 1080, fillColor: '#fff' });
+    const finalBase64 = canvas.toDataURL('image/jpeg', 0.9);
+    enviarCapturaServidor(finalBase64, cropMapaId, cropStep);
+    closeCrop();
+};
+
+function enviarCapturaServidor(base64Image, mapaId, step) {
+    fetch('guardar_captura_mapa.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_mapa: mapaId, imagen: base64Image, numero_foto: step })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            mostrarMiniaturaFlotante(base64Image);
+            setTimeout(() => {
+                if (step === 1) {
+                    if (confirm("✅ Recorte Foto 1 guardado.\n¿Quieres ir al PIV ahora?")) {
+                        setCurrentCaptureStep(mapaId, 1); 
+                        actualizarBotonCaptura(mapaId);
+                        window.location.href = 'piv_formulario.php?captura_src=' + mapaId;
+                    } else {
+                        setCurrentCaptureStep(mapaId, 2); 
+                        actualizarBotonCaptura(mapaId);
+                        alert("Perfecto. Toma la Foto 2.");
+                    }
+                } else {
+                    setCurrentCaptureStep(mapaId, 1); 
+                    actualizarBotonCaptura(mapaId);
+                    window.location.href = 'piv_formulario.php?captura_src=' + mapaId;
+                }
+            }, 500);
+        } else alert("Error al guardar en servidor.");
+    }).catch(e => alert("Error: " + e));
+}
+
+function mostrarMiniaturaFlotante(base64) {
+    let div = document.getElementById('floating-thumb');
+    if (!div) {
+        div = document.createElement('div');
+        div.id = 'floating-thumb';
+        div.style.cssText = 'position:fixed; bottom:20px; left:20px; background:white; padding:10px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.3); z-index:9999; display:flex; flex-direction:column; align-items:center; gap:8px; border-left: 4px solid #27ae60;';
+        document.body.appendChild(div);
+    }
+    div.innerHTML = `<img src="${base64}" style="width:160px; height:90px; object-fit:cover; border-radius:4px; border:1px solid #eee;"><span style="color:#27ae60; font-weight:bold; font-size:0.9rem;"><i class="fas fa-check-circle"></i> Captura Guardada</span>`;
+    div.style.display = 'flex';
+    setTimeout(() => { div.style.display = 'none'; }, 4000);
+}
+
+actualizarBotonCaptura();
 initMap();

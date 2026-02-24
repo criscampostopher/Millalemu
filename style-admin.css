@@ -201,28 +201,7 @@ tr:hover { background: #e8f5e9; }
     transform: scale(1.05);
 }
 
+
+
 /* RESPONSIVE */
 @media (max-width:768px){ .cards{grid-template-columns:1fr;} }
-
-/* ==============================
-   BOTÓN PIV FORMULARIO
-============================== */
-.piv-btn {
-    margin: 15px 10px;
-    background: linear-gradient(135deg, #2e7d32, #43a047);
-    color: #fff !important;
-    font-weight: 600;
-    border-radius: 10px;
-    padding: 14px 20px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    box-shadow: 0 6px 15px rgba(0,0,0,0.3);
-    transition: all 0.3s ease;
-}
-
-.piv-btn:hover {
-    background: linear-gradient(135deg, #1b5e20, #2e7d32);
-    transform: translateY(-3px);
-    box-shadow: 0 10px 20px rgba(0,0,0,0.4);
-}

@@ -98,5 +98,52 @@ foreach ($data as $k => $v) {
 }
 $stmt->execute();
 
+// --- INICIO: Guardar imagen del plano ---
+$dir_uploads = __DIR__ . '/uploads/';
+if (!is_dir($dir_uploads)) {
+    mkdir($dir_uploads, 0777, true);
+}
+
+if (isset($_FILES['imagen_plano']) && $_FILES['imagen_plano']['error'] === UPLOAD_ERR_OK) {
+    $ext = strtolower(pathinfo($_FILES['imagen_plano']['name'], PATHINFO_EXTENSION));
+    
+    // Solo permitimos jpg, jpeg o png
+    if (in_array($ext, ['jpg', 'jpeg', 'png'], true)) {
+        // Borramos versiones anteriores si existen para no acumular basura
+        @unlink($dir_uploads . 'plano_' . $id_mapa . '.jpg');
+        @unlink($dir_uploads . 'plano_' . $id_mapa . '.jpeg');
+        @unlink($dir_uploads . 'plano_' . $id_mapa . '.png');
+        
+        // Guardamos la nueva imagen con el ID del mapa
+        $ruta_destino = $dir_uploads . 'plano_' . $id_mapa . '.' . $ext;
+        move_uploaded_file($_FILES['imagen_plano']['tmp_name'], $ruta_destino);
+    }
+}
+
+// --- INICIO: Guardar SEGUNDA imagen del plano ---
+if (isset($_FILES['imagen_plano_2']) && $_FILES['imagen_plano_2']['error'] === UPLOAD_ERR_OK) {
+    $ext2 = strtolower(pathinfo($_FILES['imagen_plano_2']['name'], PATHINFO_EXTENSION));
+    
+    if (in_array($ext2, ['jpg', 'jpeg', 'png'], true)) {
+        @unlink($dir_uploads . 'plano_2_' . $id_mapa . '.jpg');
+        @unlink($dir_uploads . 'plano_2_' . $id_mapa . '.jpeg');
+        @unlink($dir_uploads . 'plano_2_' . $id_mapa . '.png');
+        
+        $ruta_destino_2 = $dir_uploads . 'plano_2_' . $id_mapa . '.' . $ext2;
+        move_uploaded_file($_FILES['imagen_plano_2']['tmp_name'], $ruta_destino_2);
+    }
+}
+// --- FIN: Guardar SEGUNDA imagen ---
+
+// --- INICIO: Guardar textos de los planos ---
+$textos_mapas = [
+    'comentario_1' => $_POST['comentario_plano_1'] ?? '',
+    'comentario_2' => $_POST['comentario_plano_2'] ?? ''
+];
+// Se guarda como JSON para no tener que modificar tablas en la Base de Datos
+file_put_contents($dir_uploads . 'textos_planos_' . $id_mapa . '.json', json_encode($textos_mapas));
+// --- FIN: Guardar textos ---
+// --- FIN: Guardar imagen ---
+
 header("Location: piv_formulario.php?id_mapa=".$id_mapa);
 exit;

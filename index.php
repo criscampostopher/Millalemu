@@ -26,16 +26,22 @@ if (isset($_GET['msg'])) {
 // -----------------------------------------------------------------------
 // 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
 // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
+// -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
+// 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
+// -----------------------------------------------------------------------
 $lista_mapas_visualizar = [];
 $zonas_disponibles = []; 
 $id_mapa_actual = isset($_GET['focus_map']) ? (int)$_GET['focus_map'] : 0;
 
 if ($es_admin) {
-    // A) Admin: Carga zonas para el select y TODOS los mapas
+    // A) Admin: Carga zonas y mapas (AGREGADO: m.tipo_mapa)
     $stmtZonas = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona ORDER BY nombre_zona ASC");
     $zonas_disponibles = $stmtZonas->fetchAll(PDO::FETCH_ASSOC);
 
-    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona 
+    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona 
             FROM public.mapa m
             LEFT JOIN public.zona z ON m.id_zona = z.id_zona
             ORDER BY z.nombre_zona ASC, m.categoria ASC, m.nombre_mapa ASC";
@@ -43,20 +49,36 @@ if ($es_admin) {
     $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 } else {
-    // B) Usuario: Carga solo lo asignado
-    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona
+    // B) Usuario: Carga mapas SEGÚN ZONAS + VALIDACIÓN DE FECHAS
+    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona
             FROM public.mapa m 
-            JOIN public.usuario_mapa um ON m.id_mapa = um.id_mapa
-            LEFT JOIN public.zona z ON m.id_zona = z.id_zona
-            WHERE um.id_usuario = ? 
-            AND (um.fecha_inicio <= NOW()) 
-            AND (um.fecha_fin IS NULL OR um.fecha_fin >= NOW())
+            JOIN public.zona z ON m.id_zona = z.id_zona
+            JOIN public.usuario_zona uz ON z.id_zona = uz.id_zona 
+            WHERE uz.id_usuario = ? 
+            -- VALIDACIÓN DE FECHAS DE LA ZONA
+            AND (uz.fecha_inicio <= NOW()) 
+            AND (uz.fecha_fin IS NULL OR uz.fecha_fin >= NOW())
             ORDER BY z.nombre_zona ASC, m.categoria ASC";
             
     $stmt = $pdo->prepare($sql);
     $stmt->execute([$id_usuario]);
     $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
+
+// C) CORRECCIÓN DE RUTAS (El Puente Mágico)
+foreach ($lista_mapas_visualizar as &$mapa) {
+    // 1. Si viene de BD, convertimos a API
+    if (strpos($mapa['ruta_archivo'], 'BD_STORED') !== false) {
+        $mapa['ruta_archivo'] = "Api/api_descargar_mapa.php?id=" . $mapa['id_mapa'];
+    } 
+    // 2. Si es archivo antiguo en uploads
+    elseif (!empty($mapa['ruta_archivo']) && !filter_var($mapa['ruta_archivo'], FILTER_VALIDATE_URL)) {
+        if (strpos($mapa['ruta_archivo'], 'uploads/') === false) {
+            $mapa['ruta_archivo'] = "uploads/" . $mapa['ruta_archivo'];
+        }
+    }
+}
+unset($mapa); // Limpieza
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -67,6 +89,8 @@ if ($es_admin) {
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Librería para Recortar Imágenes -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css">
     
     <style>
         /* ESTILOS GENERALES (v6.0) */
@@ -133,6 +157,7 @@ if ($es_admin) {
         .btn-panel { background: #8e44ad; margin-top: 10px; } /* Botón volver al panel */
         .btn-logout { background: white; color: #e74c3c; border: 1px solid #e74c3c; }
         .btn-reset { background: #e67e22; margin-top: 10px; }
+        
         /* Estilos interruptores */
         .btn-alert-on { background: #27ae60; color: white; font-size:0.8rem; }
         .btn-alert-off { background: #95a5a6; color: white; font-size:0.8rem; }
@@ -160,6 +185,11 @@ if ($es_admin) {
         .alerta-card { background: #c0392b; color: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-top: 10px; animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
         #markerFormContainer { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; box-shadow: 0 0 20px rgba(0,0,0,0.4); width: 300px; }
+
+        /* Modal de Recorte PIV */
+        #cropModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:5000; flex-direction:column; align-items:center; justify-content:center; }
+        #cropContainer { max-width:90%; max-height:80%; background:#000; box-shadow:0 0 20px rgba(255,255,255,0.2); }
+        #cropActions { margin-top:15px; display:flex; gap:15px; }
 
         @media (max-width: 768px) {
             .sidebar { width: 100% !important; border-radius: 0 !important; top: 0 !important; height: 100% !important; }
@@ -192,8 +222,16 @@ if ($es_admin) {
 
         <div style="flex:1; overflow-y:auto; padding-right:5px;">
             <?php if ($es_admin) { ?>
-                <h4 style="margin: 10px 0; color:#3498db; border-bottom: 2px solid #3498db; display:inline-block;">Subir Mapa</h4>
+                <h4 style="margin: 10px 0; color:#3498db; border-bottom: 2px solid #3498db; display:inline-block;">Subir Mapa </h4>
                 <form action="Api/api_subirMapa.php" method="post" enctype="multipart/form-data" id="uploadForm">
+                    <!-- Botón PIV para Admin -->
+                    <a href="piv_formulario.php" class="btn-action" style="background:#27ae60; margin-bottom:10px; text-decoration:none;">
+                        <i class="fas fa-clipboard-list"></i> <b>INGRESAR AL PIV</b>
+                    </a>
+                    <button type="button" onclick="iniciarCapturaPIV()" class="btn-action" style="background:#8e44ad; margin-bottom:15px;">
+                        <i class="fas fa-camera"></i> <b>FOTO PIV</b>
+                    </button>
+
                     <label>1. Zona:</label>
                     <input list="lista_zonas" name="nombre_zona" placeholder="Escribe o selecciona..." required autocomplete="off">
                     <datalist id="lista_zonas">
@@ -217,6 +255,9 @@ if ($es_admin) {
                 <button id="borrarMarcadores" class="btn-action btn-reset"><i class="fas fa-trash"></i> Resetear Sistema</button>
             <?php } else { ?>
                 
+                <a href="piv_formulario.php" class="btn-action" style="background:#27ae60; margin-bottom:15px; text-decoration:none;">
+                    <i class="fas fa-clipboard-list"></i> <b>INGRESAR AL PIV</b>
+                </a>
                 <button onclick="reportarUser()" class="btn-action" style="background:#e74c3c;"><i class="fas fa-broadcast-tower"></i> <b>SOS / ALERTA</b></button>
                 
                 <div style="background: #fdf2f2; padding: 15px; border-radius: 10px; border: 1px solid #f5c6cb; margin-top: 15px;">
@@ -235,7 +276,6 @@ if ($es_admin) {
                 </div>
 
             <?php } ?>
-
         </div>
 
         <div class="sidebar-footer">
@@ -279,6 +319,9 @@ if ($es_admin) {
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src='https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js'></script>
+    <!-- Plugins para Captura -->
+    <script src="https://unpkg.com/leaflet-simple-map-screenshoter"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
     
     <script>
         const LISTA_MAPAS = <?php echo json_encode($lista_mapas_visualizar); ?>;

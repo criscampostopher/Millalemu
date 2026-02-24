@@ -4,9 +4,9 @@
 // ==========================================================
 
 $host = "localhost"; 
-$dbname = "Millalemu6"; 
+$dbname = "prueba"; 
 $user = "postgres";          
-$password = "#sagitario18"; 
+$password = "oso"; 
 
 
 $dsn = "pgsql:host=$host;dbname=$dbname;options='--client_encoding=UTF8'";

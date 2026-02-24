@@ -1,39 +1,34 @@
 <?php
 // ==========================================================
-// 1. CONFIGURACIÓN Y SESIÓN
+// Archivo: menuadmin.php (Con integración PIV)
 // ==========================================================
-require_once 'Config/db_config.php';
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+session_start();
+header("Cache-Control: no-cache, no-store, must-revalidate");
+header("Pragma: no-cache");
+header("Expires: 0");
+
+require_once __DIR__ . '/Config/db_config.php'; 
+
+if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { 
+    header("Location: login.php"); 
+    exit; 
 }
 
-// Verificar sesión
-if (!isset($_SESSION['id_usuario'])) {
-    header("Location: login.php");
-    exit;
-}
-
-// Variables de usuario
+// --- NUEVO: Variables de usuario necesarias para el PIV ---
 $id_usuario   = $_SESSION['id_usuario'];
-$tipo_usuario = $_SESSION['tipo_usuario'] ?? 'usuario';
-$nombre_user  = $_SESSION['nombre_usuario'] ?? 'Usuario';
+$tipo_usuario = $_SESSION['tipo_usuario'];
+$nombre_user  = $_SESSION['nombre_usuario'];
 
-// ==========================================================
-// 2. LÓGICA DE DATOS (Consultas)
-// ==========================================================
-
-// --- A) ESTADÍSTICAS DEL DASHBOARD (Tu código original) ---
+// --- CONTADORES ORIGINALES ---
 $stats = ['u'=>0, 'm'=>0, 'p'=>0];
 $reportes = [];
 
 try {
-    // Contadores
     $stats['u'] = $pdo->query("SELECT COUNT(*) FROM public.usuario")->fetchColumn();
     $stats['m'] = $pdo->query("SELECT COUNT(*) FROM public.mapa")->fetchColumn();
-    // Alertas de HOY
     $stats['p'] = $pdo->query("SELECT COUNT(*) FROM public.peligro WHERE estado = 'activa' AND fecha_creacion::date = CURRENT_DATE")->fetchColumn();
 
-    // Tabla de Reportes (Alertas) del día
+    // --- FILTRO POR DIA ---
     $sql_rep = "SELECT p.id, p.nombre, p.descripcion, p.nivel, p.radio_metros, p.fecha_creacion, 
                        m.nombre_mapa, u.nombre_usuario 
                 FROM public.peligro p 
@@ -42,15 +37,10 @@ try {
                 WHERE p.estado = 'activa'
                 AND p.fecha_creacion::date = CURRENT_DATE
                 ORDER BY p.fecha_creacion DESC"; 
+                
     $reportes = $pdo->query($sql_rep)->fetchAll(PDO::FETCH_ASSOC);
 
-} catch (Exception $e) {
-    // Silencioso para no romper la UI si falla algo menor
-}
-
-// --- B) NUEVO: PIVs PENDIENTES DE FIRMA (Para todos) ---
-$mis_pendientes = [];
-try {
+    // --- NUEVO: PIVs PENDIENTES DE FIRMA (Para este usuario) ---
     $sql_piv = "SELECT e.id_envio, p.id_piv, p.fecha, m.nombre_mapa, u.nombre_usuario as remitente, e.mensaje, e.estado
                 FROM piv_envio e
                 JOIN piv p ON e.id_piv = p.id_piv
@@ -62,14 +52,10 @@ try {
     $stmt = $pdo->prepare($sql_piv);
     $stmt->execute([':mi_id' => $id_usuario]);
     $mis_pendientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {
-    // error_log("Error cargando pendientes: " . $e->getMessage());
-}
 
-// --- C) NUEVO: MONITOR DE FIRMAS (Solo Admin) ---
-$monitor_pivs = [];
-if ($tipo_usuario === 'admin') {
-    try {
+    // --- NUEVO: MONITOR DE FIRMAS GLOBAL (Solo Admin) ---
+    $monitor_pivs = [];
+    if ($tipo_usuario === 'admin') {
         $sql_mon = "SELECT p.id_piv, m.nombre_mapa, u.nombre_usuario as destinatario, e.estado, e.observacion_firma,
                     TO_CHAR(e.fecha_respuesta, 'DD-MM HH24:MI') as fecha_fmt
                     FROM piv_envio e
@@ -78,10 +64,10 @@ if ($tipo_usuario === 'admin') {
                     JOIN usuario u ON e.para_usuario = u.id_usuario
                     ORDER BY e.fecha_respuesta DESC NULLS LAST, p.id_piv DESC LIMIT 20";
         $monitor_pivs = $pdo->query($sql_mon)->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Exception $e) {}
-}
-?>
+    }
 
+} catch (Exception $e) {}
+?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -91,7 +77,7 @@ if ($tipo_usuario === 'admin') {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="style-admin.css">
-    
+
     <style>
         .piv-alert-box { padding: 15px; border-radius: 8px; margin-bottom: 20px; font-weight: 500; }
         .piv-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
@@ -109,17 +95,22 @@ if ($tipo_usuario === 'admin') {
         .btn-ok:hover { background: #16a34a; }
         .btn-no { background: #ef4444; }
         .btn-no:hover { background: #dc2626; }
+        .btn-pdf { background: #3498db; }
+        .btn-pdf:hover { background: #2980b9; }
         
         .pill-st { padding: 4px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
         .st-aprobado { background: #dcfce7; color: #166534; }
         .st-rechazado { background: #fee2e2; color: #991b1b; }
         .st-pendiente { background: #f1f5f9; color: #475569; }
-
-
-
-        /* Agrega esto en tu <style> en menuadmin.php */
-.btn-pdf { background: #3498db; }
-.btn-pdf:hover { background: #2980b9; }
+        
+        .monitor-toolbar { display:flex; gap:10px; flex-wrap:wrap; margin: 10px 0 6px 0; }
+        .monitor-input, .monitor-select {
+            height: 38px; border: 1px solid #dbe4ee; border-radius: 10px; padding: 0 12px;
+            font-family: inherit; font-size: 0.92rem; color: #1f2937; background: #fff;
+        }
+        .monitor-input { min-width: 280px; flex: 1 1 320px; }
+        .monitor-select { min-width: 170px; }
+        .monitor-empty { display:none; margin-top:10px; color:#64748b; font-weight:600; text-align:center; }
     </style>
 </head>
 <body>
@@ -136,17 +127,15 @@ if ($tipo_usuario === 'admin') {
         <a href="index.php"><i class="fas fa-eye"></i> <b>Visor Global</b></a>
         <a href="mapas.php"><i class="fas fa-layer-group"></i> Gestión de Mapas</a>
         <a href="usuarios.php"><i class="fas fa-users"></i> Usuarios</a>
-        <a href="piv_formulario.php" class="piv-btn">
-            <i class="fas fa-clipboard-list"></i>
-            PIV Formulario
-        </a>
+        
+        <a href="piv_formulario.php" class="piv-btn"><i class="fas fa-clipboard-list"></i> PIV Formulario</a>
+
         <div style="margin-top:auto; padding-bottom:20px;">
             <a href="logout.php" style="color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Salir</a>
         </div>
     </aside>
 
     <main class="main">
-        
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <h1>Bienvenido, <?php echo htmlspecialchars($nombre_user); ?></h1>
             <span style="background:#2c3e50; color:white; padding:5px 12px; border-radius:15px; font-size:0.85rem; border:1px solid #fdd835;">
@@ -197,28 +186,27 @@ if ($tipo_usuario === 'admin') {
                         <tr>
                             <td><strong>#<?php echo $row['id_piv']; ?></strong></td>
                             <td><?php echo date('d/m/Y', strtotime($row['fecha'])); ?></td>
-                            <td style="color:#15803d; font-weight:600;"><?php echo htmlspecialchars($row['nombre_mapa']); ?></td>
+                            <td style="color:#15803d; font-weight:600;"><?php echo htmlspecialchars($row['nombre_mapa'] ?? 'Sin Mapa'); ?></td>
                             <td><?php echo htmlspecialchars($row['remitente']); ?></td>
                             <td style="font-style:italic; color:#666;"><?php echo htmlspecialchars($row['mensaje']); ?></td>
                             <td style="text-align:center; white-space: nowrap;">
-    <a href="piv_pdf_v2.php?id_piv=<?php echo $row['id_piv']; ?>" target="_blank" class="btn-action btn-pdf" title="Ver PDF">
-        <i class="fas fa-file-pdf"></i>
-    </a>
-
-    <form action="procesar_firma.php" method="POST" style="display:inline;">
-        <input type="hidden" name="id_envio" value="<?php echo $row['id_envio']; ?>">
-        <input type="hidden" name="id_piv" value="<?php echo $row['id_piv']; ?>">
-        <input type="hidden" name="accion" id="act_<?php echo $row['id_envio']; ?>">
-        <input type="hidden" name="observacion" id="obs_<?php echo $row['id_envio']; ?>">
-        
-        <button type="button" class="btn-action btn-ok" onclick="firmarPiv(<?php echo $row['id_envio']; ?>)" title="Aprobar / Firmar">
-            <i class="fas fa-check"></i>
-        </button>
-        <button type="button" class="btn-action btn-no" onclick="rechazarPiv(<?php echo $row['id_envio']; ?>)" title="Observar / Rechazar">
-            <i class="fas fa-times"></i>
-        </button>
-    </form>
-</td>
+                                <a href="piv_pdf_v2.php?id_piv=<?php echo $row['id_piv']; ?>" target="_blank" class="btn-action btn-pdf" title="Ver PDF">
+                                    <i class="fas fa-file-pdf"></i>
+                                </a>
+                                <form action="procesar_firma.php" method="POST" style="display:inline;">
+                                    <input type="hidden" name="id_envio" value="<?php echo $row['id_envio']; ?>">
+                                    <input type="hidden" name="id_piv" value="<?php echo $row['id_piv']; ?>">
+                                    <input type="hidden" name="accion" id="act_<?php echo $row['id_envio']; ?>">
+                                    <input type="hidden" name="observacion" id="obs_<?php echo $row['id_envio']; ?>">
+                                    
+                                    <button type="button" class="btn-action btn-ok" onclick="firmarPiv(<?php echo $row['id_envio']; ?>)" title="Aprobar / Firmar">
+                                        <i class="fas fa-check"></i>
+                                    </button>
+                                    <button type="button" class="btn-action btn-no" onclick="rechazarPiv(<?php echo $row['id_envio']; ?>)" title="Observar / Rechazar">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </form>
+                            </td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -279,11 +267,20 @@ if ($tipo_usuario === 'admin') {
             </tbody>
         </table>
 
-        <?php if ($tipo_usuario === 'admin' && count($monitor_pivs) > 0): ?>
+        <?php if ($tipo_usuario === 'admin'): ?>
         <div class="piv-section" style="border-left-color: #f59e0b;">
             <h3 style="color:#f59e0b;"><i class="fas fa-tower-observation"></i> Monitor Global de Firmas (Últimos 20)</h3>
+            <div class="monitor-toolbar">
+                <input type="text" id="monitorSearch" class="monitor-input" placeholder="Buscar por PIV, mapa, destinatario u observación...">
+                <select id="monitorEstado" class="monitor-select">
+                    <option value="">Todos los estados</option>
+                    <option value="aprobado">Aprobado</option>
+                    <option value="rechazado">Rechazado</option>
+                    <option value="pendiente">Pendiente</option>
+                </select>
+            </div>
             <div style="overflow-x:auto;">
-                <table class="table-piv">
+                <table class="table-piv" id="monitorTable">
                     <thead>
                         <tr>
                             <th>PIV</th>
@@ -292,41 +289,67 @@ if ($tipo_usuario === 'admin') {
                             <th>Estado</th>
                             <th>Fecha Respuesta</th>
                             <th>Observación</th>
+                            <th>PDF</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($monitor_pivs as $mon): 
-                            $clase = 'st-pendiente';
-                            if($mon['estado'] == 'aprobado') $clase = 'st-aprobado';
-                            if($mon['estado'] == 'rechazado') $clase = 'st-rechazado';
-                        ?>
-                        <tr>
-                            <td>#<?php echo $mon['id_piv']; ?></td>
-                            <td><?php echo htmlspecialchars($mon['nombre_mapa']); ?></td>
-                            <td><?php echo htmlspecialchars($mon['destinatario']); ?></td>
-                            <td><span class="pill-st <?php echo $clase; ?>"><?php echo ucfirst($mon['estado']); ?></span></td>
-                            <td><?php echo $mon['fecha_fmt'] ? $mon['fecha_fmt'] : '-'; ?></td>
-                            <td style="color:#dc2626; font-size:0.85rem; font-style:italic;">
-                                <?php echo htmlspecialchars($mon['observacion_firma'] ?? ''); ?>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
+                        <?php if (count($monitor_pivs) > 0): ?>
+                            <?php foreach($monitor_pivs as $mon): 
+                                $clase = 'st-pendiente';
+                                if($mon['estado'] == 'aprobado') $clase = 'st-aprobado';
+                                if($mon['estado'] == 'rechazado') $clase = 'st-rechazado';
+                                $estadoRaw = strtolower(trim((string)($mon['estado'] ?? 'pendiente')));
+                                $obsRaw = strtolower(trim((string)($mon['observacion_firma'] ?? '')));
+                                $txtSearch = strtolower(trim(
+                                    '#' . (int)$mon['id_piv'] . ' ' .
+                                    (string)($mon['nombre_mapa'] ?? '') . ' ' .
+                                    (string)($mon['destinatario'] ?? '') . ' ' .
+                                    $estadoRaw . ' ' .
+                                    $obsRaw
+                                ));
+                            ?>
+                            <tr class="monitor-row"
+                                data-estado="<?php echo htmlspecialchars($estadoRaw, ENT_QUOTES, 'UTF-8'); ?>"
+                                data-search="<?php echo htmlspecialchars($txtSearch, ENT_QUOTES, 'UTF-8'); ?>">
+                                <td>#<?php echo $mon['id_piv']; ?></td>
+                                <td><?php echo htmlspecialchars($mon['nombre_mapa'] ?? 'Sin mapa'); ?></td>
+                                <td><?php echo htmlspecialchars($mon['destinatario']); ?></td>
+                                <td><span class="pill-st <?php echo $clase; ?>"><?php echo ucfirst($mon['estado']); ?></span></td>
+                                <td><?php echo $mon['fecha_fmt'] ? $mon['fecha_fmt'] : '-'; ?></td>
+                                <td style="color:#dc2626; font-size:0.85rem; font-style:italic;">
+                                    <?php echo htmlspecialchars($mon['observacion_firma'] ?? ''); ?>
+                                </td>
+                                <td style="text-align:center;">
+                                    <a href="piv_pdf_v2.php?id_piv=<?php echo (int)$mon['id_piv']; ?>" target="_blank" class="btn-action btn-pdf" title="Ver PDF">
+                                        <i class="fas fa-file-pdf"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="7" style="text-align:center; color:#64748b; padding:16px;">
+                                    No hay registros en el monitor global por ahora.
+                                </td>
+                            </tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
             </div>
+            <div id="monitorEmpty" class="monitor-empty">No hay resultados con ese filtro.</div>
         </div>
         <?php endif; ?>
 
     </main>
 
     <script>
-        // Recargar página al volver atrás (para actualizar estados)
+        // Recargar página al volver atrás (para actualizar estados de PIV)
         window.addEventListener("pageshow", function(event){
             var historyTraversal = event.persisted || (typeof window.performance != "undefined" && window.performance.navigation.type === 2);
             if(historyTraversal){window.location.reload();}
         });
 
-        // Función original de alertas
+        // Alertas (Original)
         function resolver(id) {
             if(confirm("¿Borrar este reporte permanentemente?")) {
                 fetch('Api/api_mapa.php', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action:'delete_marker', id:id}) })
@@ -334,7 +357,7 @@ if ($tipo_usuario === 'admin') {
             }
         }
 
-        // Nuevas funciones para PIV
+        // --- NUEVO: Funciones para firmar/rechazar PIVs ---
         function firmarPiv(idEnvio) {
             if(confirm("¿Confirma que ha revisado y aprueba este documento PIV?")) {
                 document.getElementById('act_' + idEnvio).value = 'aprobar';
@@ -352,6 +375,36 @@ if ($tipo_usuario === 'admin') {
                 alert("Debe escribir un motivo para observar el documento.");
             }
         }
+
+        // --- NUEVO: Filtro para el Monitor de PIVs ---
+        const monitorSearch = document.getElementById('monitorSearch');
+        const monitorEstado = document.getElementById('monitorEstado');
+        const monitorEmpty = document.getElementById('monitorEmpty');
+        const monitorRows = Array.from(document.querySelectorAll('.monitor-row'));
+
+        const norm = (v) => (v || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+
+        function aplicarFiltroMonitor() {
+            const q = norm(monitorSearch ? monitorSearch.value : '');
+            const est = norm(monitorEstado ? monitorEstado.value : '');
+            let visibles = 0;
+
+            monitorRows.forEach((row) => {
+                const rowTxt = norm(row.getAttribute('data-search'));
+                const rowEst = norm(row.getAttribute('data-estado'));
+                const okText = !q || rowTxt.includes(q);
+                const okEst = !est || rowEst === est;
+                const show = okText && okEst;
+                
+                row.style.display = show ? '' : 'none';
+                if (show) visibles++;
+            });
+
+            if (monitorEmpty) monitorEmpty.style.display = visibles === 0 ? 'block' : 'none';
+        }
+
+        if (monitorSearch) monitorSearch.addEventListener('input', aplicarFiltroMonitor);
+        if (monitorEstado) monitorEstado.addEventListener('change', aplicarFiltroMonitor);
     </script>
 </body>
 </html>

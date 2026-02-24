@@ -26,22 +26,25 @@ $error = "";
 try {
     // 1. CARGAR MAPAS ASIGNADOS (Tu código original)
     $sql_mapas = "SELECT m.* FROM public.mapa m
-            JOIN public.usuario_mapa um ON m.id_mapa = um.id_mapa
-            WHERE um.id_usuario = ?
-            AND (um.fecha_inicio <= NOW())
-            AND (um.fecha_fin IS NULL OR um.fecha_fin >= NOW())
+            JOIN public.zona z ON m.id_zona = z.id_zona
+            JOIN public.usuario_zona uz ON z.id_zona = uz.id_zona
+            WHERE uz.id_usuario = ?
+            AND (uz.fecha_inicio <= NOW())
+            AND (uz.fecha_fin IS NULL OR uz.fecha_fin >= NOW())
             ORDER BY m.fecha_creacion DESC";
 
     $stmt = $pdo->prepare($sql_mapas);
     $stmt->execute([$id_usuario]);
     $mapas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // 2. CARGAR PIVs PENDIENTES DE FIRMA (Nuevo)
-    $sql_piv = "SELECT e.id_envio, p.id_piv, p.fecha, m.nombre_mapa, u.nombre_usuario as remitente, e.mensaje, e.estado
-                FROM piv_envio e
-                JOIN piv p ON e.id_piv = p.id_piv
-                LEFT JOIN mapa m ON p.id_mapa = m.id_mapa
-                JOIN usuario u ON e.de_usuario = u.id_usuario
+    // 2. CARGAR PIVs PENDIENTES DE FIRMA (Corregido)
+    // - Buscamos estado 'enviado' o 'visto'
+    // - Quitamos 'e.mensaje' porque no existe en la base de datos
+    $sql_piv = "SELECT e.id_envio, p.id_piv, p.fecha, m.nombre_mapa, u.nombre_usuario as remitente, e.estado
+                FROM public.piv_envio e
+                JOIN public.piv p ON e.id_piv = p.id_piv
+                LEFT JOIN public.mapa m ON p.id_mapa = m.id_mapa
+                JOIN public.usuario u ON e.de_usuario = u.id_usuario
                 WHERE e.para_usuario = ? 
                 AND e.estado IN ('enviado', 'visto')
                 ORDER BY p.fecha DESC";
@@ -50,8 +53,9 @@ try {
     $stmt_piv->execute([$id_usuario]);
     $pivs_pendientes = $stmt_piv->fetchAll(PDO::FETCH_ASSOC);
 
-} catch (Exception $e) {
-    $error = "Error al cargar datos.";
+} catch (PDOException $e) {
+    // Si hay otro error (como que usuario_mapa no exista), esto nos lo dirá claramente
+    die("Error SQL real: " . $e->getMessage());
 }
 ?>
 
@@ -171,7 +175,6 @@ try {
                     <div class="piv-info">
                         <strong>Documento #<?= $piv['id_piv'] ?> - <?= htmlspecialchars($piv['nombre_mapa']) ?></strong>
                         <span>Enviado por: <?= htmlspecialchars($piv['remitente']) ?></span><br>
-                        <span style="font-style: italic;">"<?= htmlspecialchars($piv['mensaje']) ?>"</span>
                     </div>
                     
                     <div class="piv-actions">
