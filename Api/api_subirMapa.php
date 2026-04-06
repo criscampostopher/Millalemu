@@ -1,295 +1,145 @@
 <?php
 // ==========================================================
-// Api/api_subirMapa.php (Versión BD - Lógica Intacta)
+// Api/api_usuarios.php 
 // ==========================================================
-session_start();
-// --- AGREGAR ESTO ---
-ini_set('memory_limit', '1024M'); // 1GB de RAM para procesar mapas grandes
-set_time_limit(600);
-
 require_once __DIR__ . '/../Config/db_config.php';
+require_once __DIR__ . '/../Config/roles.php';
+header('Content-Type: application/json');
 
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
 
-// --- TUS FUNCIONES DE DETECCIÓN (INTACTAS) ---
-function extraerRGB($str) {
-    if (preg_match('/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/', $str, $m)) {
-        return [(int)$m[1], (int)$m[2], (int)$m[3]]; 
-    }
-    return null;
+session_start();
+if (!usuarioSesionPuedeAdministrar()) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'error' => 'No autorizado']);
+    exit;
 }
 
-function esColorSimilar($rgbInput, $listaObjetivo, $tolerancia = 10) {
-    if (!$rgbInput) return false;
-    foreach ($listaObjetivo as $target) {
-        $diffR = abs($rgbInput[0] - $target[0]);
-        $diffG = abs($rgbInput[1] - $target[1]);
-        $diffB = abs($rgbInput[2] - $target[2]);
-        if ($diffR <= $tolerancia && $diffG <= $tolerancia && $diffB <= $tolerancia) return true;
-    }
-    return false;
-}
+$inputJSON = file_get_contents('php://input');
+$data = json_decode($inputJSON, true);
+$action = $_GET['action'] ?? $data['action'] ?? '';
 
-function normalizarColor($color) {
-    return str_replace(' ', '', strtoupper(trim($color)));
-}
-
-function detectarPeligroPorColor($props) {
-    $color = $props['FILL_COLOR'] ?? $props['Fill_Color'] ?? $props['fill_color'] ?? '';
-    if (!$color) return false;
-    $colorNorm = normalizarColor($color);
-    if ($colorNorm === 'RGB(128,128,64)') return 'Vegetación Nativa';
-    if ($colorNorm === 'RGB(0,128,255)') return 'Protección de Agua';
-    return false;
-}
-
-// --- VERIFICACIÓN DE ACCESO ---
-$es_admin = ($_SESSION['tipo_usuario'] ?? '') === 'admin';
-$id_usuario_actual = $_SESSION['id_usuario'] ?? 1;
-
-if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_FILES["mapa"])) {
-    if (!$es_admin) { header("Location: ../index.php?status=error&msg=Acceso denegado"); exit; }
-
-    try {
-        // 1. GESTIÓN DE ZONA (Igual que antes)
-        $categoria = $_POST['categoria'] ?? 'Escenario';
-        $nombre_zona_input = trim($_POST['nombre_zona'] ?? 'Zona General');
-        if (empty($nombre_zona_input)) $nombre_zona_input = 'Zona General';
-
-        $id_zona = null;
-        $stmtCheckZona = $pdo->prepare("SELECT id_zona FROM public.zona WHERE LOWER(nombre_zona) = LOWER(?) LIMIT 1");
-        $stmtCheckZona->execute([$nombre_zona_input]);
-        $zonaExistente = $stmtCheckZona->fetch(PDO::FETCH_ASSOC);
+try {
+    switch ($action) {
         
-        if ($zonaExistente) { 
-            $id_zona = $zonaExistente['id_zona']; 
-        } else {
-            $stmtInsertZona = $pdo->prepare("INSERT INTO public.zona (nombre_zona, descripcion) VALUES (?, ?) RETURNING id_zona");
-            $stmtInsertZona->execute([$nombre_zona_input, 'Auto-creada']);
-            $id_zona = $stmtInsertZona->fetchColumn();
-        }
+        // ---  LISTAR USUARIOS ---
+        case 'fetch':
+            $sql = "SELECT id_usuario AS id, nombre_usuario, email, tipo_usuario AS rol FROM public.usuario ORDER BY id_usuario ASC";
+            $stmt = $pdo->query($sql);
+            echo json_encode(['success' => true, 'users' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+            break;
 
-        // 2. PROCESAMIENTO DEL ARCHIVO (EXTRACCIÓN DE CONTENIDO)
-        // Aquí está el cambio: Leemos el contenido a una variable en lugar de moverlo a disco.
-        // 2. PROCESAMIENTO Y VALIDACIÓN (Anti-Crash)
-        
-        // A) Verificar errores del servidor (Tamaño, Interrupción, etc.)
-        if ($_FILES['mapa']['error'] !== UPLOAD_ERR_OK) {
-            $msg = "Error al subir.";
-            switch ($_FILES['mapa']['error']) {
-                case UPLOAD_ERR_INI_SIZE:
-                case UPLOAD_ERR_FORM_SIZE:
-                    $msg = "El archivo es demasiado pesado para el servidor.";
-                    break;
-                case UPLOAD_ERR_PARTIAL:
-                    $msg = "La subida se cortó. Intente de nuevo.";
-                    break;
-                case UPLOAD_ERR_NO_FILE:
-                    $msg = "No se envió ningún archivo.";
-                    break;
-            }
-            // Redirigimos con el error amigable en vez de crashear
-            header("Location: ../index.php?status=error&msg=" . urlencode($msg)); 
-            exit;
-        }
-
-        // B) Validar ruta temporal
-        $tmp_name = $_FILES["mapa"]["tmp_name"];
-        if (empty($tmp_name) || !is_uploaded_file($tmp_name)) {
-            header("Location: ../index.php?status=error&msg=Error crítico: El servidor rechazó el archivo."); 
-            exit;
-        }
-
-        $nombre_original = $_FILES["mapa"]["name"];
-        $ext = strtolower(pathinfo($nombre_original, PATHINFO_EXTENSION));
-        $nombre_mapa_limpio = pathinfo($nombre_original, PATHINFO_FILENAME);
-        
-        $tipo_mapa = "";
-        $contentForBD = null;
-
-        // Validación de nombre duplicado
-        $check = $pdo->prepare("SELECT 1 FROM public.mapa WHERE nombre_mapa = ?");
-        $check->execute([$nombre_mapa_limpio]);
-        if ($check->fetch()) { header("Location: ../index.php?status=error&msg=El nombre ya existe"); exit; }
-
-        // Extracción según tipo
-        if ($ext === 'kmz') {
-            $zip = new ZipArchive;
-            if ($zip->open($tmp_name) === TRUE) {
-                $kmlName = false;
-                for($i = 0; $i < $zip->numFiles; $i++){
-                    $info = pathinfo($zip->statIndex($i)['name']);
-                    if(isset($info['extension']) && strtolower($info['extension']) === 'kml'){ 
-                        $kmlName = $zip->statIndex($i)['name']; break; 
-                    }
-                }
-                if($kmlName) {
-                    $contentForBD = $zip->getFromName($kmlName);
-                    $tipo_mapa = "KML"; 
-                } else {
-                    $zip->close();
-                    header("Location: ../index.php?status=error&msg=El KMZ no contiene un archivo KML válido."); exit;
-                }
-                $zip->close();
-            } else {
-                header("Location: ../index.php?status=error&msg=Error al abrir el KMZ."); exit;
-            }
-        } elseif ($ext === 'kml') {
-            $contentForBD = file_get_contents($tmp_name);
-            $tipo_mapa = "KML";
-        } elseif ($ext === 'geojson' || $ext === 'json') {
-
-        
-            $contentForBD = file_get_contents($tmp_name);
-            if (json_decode($contentForBD) === null) { header("Location: ../index.php?status=error&msg=GeoJSON inválido"); exit; }
-            $tipo_mapa = "GeoJSON";
-        }
-
-        // 3. INSERCIÓN EN BD (Guardamos contenido + metadatos)
-        if ($contentForBD && $id_zona) {
+        // ---  CREAR USUARIO ---
+        case 'create':
+            $user = trim($data['user'] ?? '');
+            $email = trim($data['email'] ?? ''); 
+            $pass = trim($data['pass'] ?? '');
             
-            // Usamos 'ruta_archivo' para guardar el nombre original como referencia (BACKUP)
-            $referencia_archivo = "BD_STORED: " . $nombre_original;
+            // VALIDACIÓN ESTRICTA DE LOS 3 ROLES PERMITIDOS
+            $rol_recibido = $data['rol'] ?? 'usuario';
+            $rol = in_array($rol_recibido, ['admin', 'ingeniero_forestal', 'jefe_operaciones', 'jefe_faena', 'usuario'], true) ? $rol_recibido : 'usuario';
 
-            $sql = "INSERT INTO public.mapa (nombre_mapa, tipo_mapa, ruta_archivo, fecha_creacion, categoria, id_zona, contenido_source) 
-                    VALUES (?, ?, ?, NOW(), ?, ?, ?) RETURNING id_mapa";
+            if (empty($user) || empty($pass)) throw new Exception("Faltan datos obligatorios");
+
+            // Validar duplicados
+            $check = $pdo->prepare("SELECT 1 FROM public.usuario WHERE nombre_usuario = ? OR email = ?");
+            $check->execute([$user, $email]);
+            if ($check->fetch()) throw new Exception("Usuario o Email ya existe");
+
+            $hash = password_hash($pass, PASSWORD_DEFAULT);
+            $sql = "INSERT INTO public.usuario (nombre_usuario, email, contrasena_hash, tipo_usuario) VALUES (?, ?, ?, ?)";
+            $pdo->prepare($sql)->execute([$user, empty($email) ? null : $email, $hash, $rol]);
+            
+            echo json_encode(['success' => true]);
+            break;
+
+        // ---  ACTUALIZAR USUARIO ---
+        case 'update':
+            $id   = $data['id'];
+            if ($id == 1 && $_SESSION['id_usuario'] != 1) throw new Exception("Solo el Super Admin puede editarse a sí mismo.");
+
+            $user = trim($data['user']);
+            $email = trim($data['email'] ?? ''); 
+            $pass = trim($data['pass'] ?? '');
+            
+            // VALIDACIÓN ESTRICTA DE LOS 3 ROLES PERMITIDOS
+            $rol_recibido = $data['rol'] ?? 'usuario';
+            $rol = in_array($rol_recibido, ['admin', 'ingeniero_forestal', 'jefe_operaciones', 'jefe_faena', 'usuario'], true) ? $rol_recibido : 'usuario';
+
+            $sqlBase = "UPDATE public.usuario SET nombre_usuario=?, email=?, tipo_usuario=?";
+            $params = [$user, empty($email) ? null : $email, $rol];
+
+            if (!empty($pass)) {
+                $sqlBase .= ", contrasena_hash=?";
+                $params[] = password_hash($pass, PASSWORD_DEFAULT);
+            }
+            
+            $sqlBase .= " WHERE id_usuario=?";
+            $params[] = $id;
+
+            $pdo->prepare($sqlBase)->execute($params);
+            echo json_encode(['success' => true]);
+            break;
+
+        // --- ELIMINAR USUARIO ---
+        case 'delete':
+            $id = $data['id'];
+            if ($id == 1 || $id == $_SESSION['id_usuario']) throw new Exception("No puedes borrarte a ti mismo ni al admin principal");
+            $pdo->prepare("DELETE FROM public.usuario WHERE id_usuario = ?")->execute([$id]);
+            echo json_encode(['success' => true]);
+            break;
+
+        // --- MAPAS / ZONAS ---
+        case 'get_user_maps': 
+            $id_usuario = $data['id_usuario'];
+            $sql = "SELECT uz.id_zona, z.nombre_zona 
+                    FROM public.usuario_zona uz
+                    JOIN public.zona z ON uz.id_zona = z.id_zona
+                    WHERE uz.id_usuario = ?";
             $stmt = $pdo->prepare($sql);
-            // OJO: Aquí pasamos $contentForBD al final
-            $stmt->execute([$nombre_mapa_limpio, $tipo_mapa, $referencia_archivo, $categoria, $id_zona, $contentForBD]);
-            $nuevo_id_mapa = $stmt->fetchColumn();
+            $stmt->execute([$id_usuario]);
+            echo json_encode(['success' => true, 'maps' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+            break;
+
+        case 'assign_map':
+            $id_usuario = $data['id_usuario'];
+            $id_zona    = $data['id_zona']; 
+            $inicio     = $data['inicio'] ?: date('Y-m-d H:i:s');
+
+            $sql = "INSERT INTO public.usuario_zona (id_usuario, id_zona, fecha_inicio) VALUES (?, ?, ?)";
+            $pdo->prepare($sql)->execute([$id_usuario, $id_zona, $inicio]);
+            echo json_encode(['success' => true]);
+            break;
+
+        case 'update_map_assignment':
+            $id_usuario = $data['id_usuario'];
+            $id_mapa    = $data['id_zona'];
+            $inicio     = $data['inicio'] ?: date('Y-m-d H:i:s');
+            $fin        = $data['fin'] ?: null;
+
+            if ($fin && strtotime($fin) <= strtotime($inicio)) throw new Exception("Fecha fin debe ser mayor a inicio");
+
+            $sql = "UPDATE public.usuario_zona SET fecha_inicio = ?, fecha_fin = ? WHERE id_usuario = ? AND id_zona = ?";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute([$inicio, $fin, $id_usuario, $id_mapa]);
             
-         
-          
-            // =========================================================
-            // 4. GENERACIÓN DE ALERTAS (LÓGICA PRESERVADA AL 100%)
-            // =========================================================
-            $alertasDetectadas = 0;
+            echo json_encode(['success' => true]);
+            break;
 
-            if ($tipo_mapa === 'GeoJSON') {
-                $json = json_decode($contentForBD, true);
+        case 'unassign_map':
+            $id_usuario = $data['id_usuario'];
+            $id_zona    = $data['id_zona'];
+            if ($id_usuario == 1 && $id_zona == 1) throw new Exception("No se puede quitar el mapa base al Super Admin.");
+            $pdo->prepare("DELETE FROM public.usuario_zona WHERE id_usuario = ? AND id_zona = ?")->execute([$id_usuario, $id_zona]);
+            echo json_encode(['success' => true]);
+            break;
 
-                // A) CASO PENDIENTES: Fusión Topológica
-                if (stripos($categoria, 'Pendiente') !== false && isset($json['features'])) {
-                    $targetAlto = [[0,0,0], [168,0,0], [255,0,0], [52,52,52], [255,85,0]]; 
-                     
-
-                    $geomsAlto = [];
-                
-
-                    foreach ($json['features'] as $f) {
-                        $props = $f['properties'] ?? [];
-                        $colorStr = $props['FILL_COLOR'] ?? $props['Fill_Color'] ?? $props['fill_color'] ?? '';
-                        $rgb = extraerRGB($colorStr);
-                        if ($rgb && isset($f['geometry'])) {
-                            if (esColorSimilar($rgb, $targetAlto, 10)) $geomsAlto[] = $f['geometry'];
-                            elseif (esColorSimilar($rgb, $targetMedio, 10)) $geomsMedio[] = $f['geometry'];
-                        }
-                    }
-
-                   // Función optimizada para subir mapas gigantes sin estallar la memoria
-                    $insertarFusion = function($geoms, $nombre, $nivel) use ($pdo, $nuevo_id_mapa, $id_usuario_actual) {
-                        if (empty($geoms)) return;
-                        
-                        // Dividimos los polígonos en grupos de 1000 para no saturar la BD
-                        $lotes = array_chunk($geoms, 1000); 
-                        
-                        foreach ($lotes as $index => $lote) {
-                            $col = ["type" => "GeometryCollection", "geometries" => $lote];
-                            $jsonLote = json_encode($col);
-                            
-                            // Si es el primer lote, usamos el nombre original. Si hay más, agregamos sufijo (Parte 2, etc.)
-                            $nombreFinal = ($index === 0) ? $nombre : "$nombre (Parte " . ($index + 1) . ")";
-                            
-                            $sql = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
-                                    SELECT ?, 'Pendiente Fusionada', 'poligono', ?, 'activa', ?, ?, 
-                                    ST_Multi(ST_Union(d.geom)) 
-                                    FROM (SELECT (ST_Dump(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)))).geom) AS d";
-                                    
-                            $pdo->prepare($sql)->execute([$nombreFinal, $nivel, $nuevo_id_mapa, $id_usuario_actual, $jsonLote]);
-                        }
-                    };
-
-                    $insertarFusion($geomsAlto, "PENDIENTE CRÍTICA", "Critico");
-                    
-                    $alertasDetectadas++;
-                }
-
-                // B) BUFFER Y OTRAS ALERTAS
-                if (isset($json['features'])) {
-                    foreach ($json['features'] as $feature) {
-                        $props = $feature['properties'] ?? [];
-                        $geomJSON = json_encode($feature['geometry']);
-                        
-                        // CASO ACTA (Buffer Interno -20m)
-                        if (strtolower($categoria) === 'acta') {
-                            $sqlAnillo = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
-                                          VALUES (?, ?, 'poligono', 'Advertencia', 'activa', ?, ?, 
-                                          ST_Multi(ST_Transform(
-                                              ST_Difference(
-                                                  ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326), 3857)),
-                                                  ST_Buffer(ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326), 3857)), -20) 
-                                              ), 
-                                          4326)::geometry))";
-                            // NOTA: Mantenemos el -20 exacto de tu código original
-                            $pdo->prepare($sqlAnillo)->execute(["⚠️ Límite de Acta", "Zona de advertencia (20m)", $nuevo_id_mapa, $id_usuario_actual, $geomJSON, $geomJSON]);
-                            $alertasDetectadas++;
-                        }
-
-                        // CASO COLORES (Buffer Externo 10m)
-                        $tipoDetectado = detectarPeligroPorColor($props);
-                        if ($tipoDetectado) {
-                            $sqlAlerta = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
-                                          VALUES (?, ?, 'poligono', 'Critico', 'activa', ?, ?, 
-                                          ST_Multi(ST_Buffer(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326))::geography, 10)::geometry))";
-                            // NOTA: Mantenemos el buffer de 10m exacto de tu código original
-                            $pdo->prepare($sqlAlerta)->execute(["⚠️ Zona Protegida ($tipoDetectado)", "Buffer automático color (10m)", $nuevo_id_mapa, $id_usuario_actual, $geomJSON]);
-                            $alertasDetectadas++;
-                        }
-                    }
-                }
-            }
-            
-            // C) LÓGICA KML (Buffer -15m)
-            elseif ($tipo_mapa === 'KML') {
-                try {
-                    libxml_use_internal_errors(true);
-                    $xml = simplexml_load_string($contentForBD);
-                    if ($xml !== false) {
-                        $xml->registerXPathNamespace('kml', 'http://www.opengis.net/kml/2.2');
-                        $placemarks = $xml->xpath("//kml:Placemark");
-                        foreach ($placemarks as $pm) {
-                            $geomXML = "";
-                            if (isset($pm->Polygon)) $geomXML = $pm->Polygon->asXML();
-                            elseif (isset($pm->MultiGeometry)) $geomXML = $pm->MultiGeometry->asXML();
-                            
-                            if ($geomXML && strtolower($categoria) === 'acta') {
-                                $sqlAnillo = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
-                                              VALUES (?, ?, 'poligono', 'Advertencia', 'activa', ?, ?, 
-                                              ST_Multi(ST_Transform(
-                                                  ST_Difference(
-                                                      ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromKML(?), 4326), 3857)),
-                                                      ST_Buffer(ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromKML(?), 4326), 3857)), -15)
-                                                  ), 
-                                              4326)::geometry))";
-                                // NOTA: Mantenemos el -15m para KML como estaba en tu archivo
-                                $pdo->prepare($sqlAnillo)->execute(["⚠️ Límite de Acta", "Zona de advertencia (15m)", $nuevo_id_mapa, $id_usuario_actual, $geomXML, $geomXML]);
-                                $alertasDetectadas++;
-                            }
-                        }
-                    }
-                    libxml_clear_errors();
-                } catch (Exception $e) { }
-            }
-
-            $msgExtra = $alertasDetectadas > 0 ? " Se generaron $alertasDetectadas zonas de seguridad." : "";
-            // Redirección Exitosa
-            header("Location: ../index.php?focus_map=" . $nuevo_id_mapa . "&status=success&msg=Mapa guardado en BD." . $msgExtra);
-            exit;
-        }
-
-    } catch (Exception $e) {
-        header("Location: ../index.php?status=error&msg=Error: " . $e->getMessage());
-        exit;
+        default:
+            echo json_encode(['success' => false, 'error' => 'Acción inválida']);
     }
+
+} catch (Exception $e) {
+    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
 }
-header("Location: ../index.php");
 ?>

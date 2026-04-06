@@ -1,0 +1,874 @@
+<?php
+// piv_pdf_v3.php  (plantilla "como imagen", 100% dibujada)
+session_start();
+require_once __DIR__ . '/Config/db_config.php';
+
+if (!isset($_SESSION['id_usuario'])) { header("Location: login.php"); exit; }
+
+require_once __DIR__ . '/lib/fpdf/fpdf.php';
+
+function htxt($s) {
+  $s = (string)$s;
+  if ($s === '') return '';
+
+  // Si llega en bytes no UTF-8 (p. ej. latin1), conviÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©rtelo antes de iconv.
+  if (!preg_match('//u', $s)) {
+    $s = utf8_encode($s);
+  }
+
+  $out = @iconv('UTF-8', 'windows-1252//TRANSLIT//IGNORE', $s);
+  if ($out === false) {
+    $out = @iconv('ISO-8859-1', 'windows-1252//TRANSLIT//IGNORE', $s);
+  }
+  return $out === false ? '' : $out;
+}
+function asNum($value, $dec = 2) {
+  if ($value === null || $value === '') return '';
+  if (!is_numeric($value)) return (string)$value;
+  return number_format((float)$value, $dec, '.', '');
+}
+function boolSI($v){
+  return ($v === true || $v === 't' || $v === 1 || $v === '1') ? 'SI' : 'NO';
+}
+
+// ===== Input =====
+$id_piv = (int)($_GET['id_piv'] ?? 0);
+$debug = isset($_GET['debug']) ? 1 : 0;
+if ($id_piv <= 0) die("Falta id_piv");
+
+// ===== Datos BD =====
+$sql = "
+SELECT
+  p.id_piv, p.fecha, p.acta, p.consideraciones, p.medidas, p.observaciones,
+  f.predio, f.codigo_predio, f.escenario, f.temporada,
+  f.especie, f.vma_m3_arb, f.superficie_ha, f.volumen_total_m3,
+  f.arboles_hora, f.m3_hora,
+  f.team_equipo, f.tecnologia, f.asistencia_tipo, f.jefe_faena,
+  f.volteo_cerca_tendido_electrico, f.volteo_cerca_camino_publico,
+  f.uso_pivotes, f.tiempo_estimado_dias, f.pendiente_max_pct,
+  f.tipo_suelo, f.verif_permisos, f.jornada,
+  m.nombre_mapa
+FROM public.piv p
+LEFT JOIN public.piv_ficha f ON f.id_ficha = p.id_ficha
+LEFT JOIN public.mapa m ON m.id_mapa = p.id_mapa
+WHERE p.id_piv = :id
+";
+$st = $pdo->prepare($sql);
+$st->execute([':id'=>$id_piv]);
+$row = $st->fetch(PDO::FETCH_ASSOC);
+if (!$row) die("PIV no encontrado");
+
+// ===== PDF base =====
+$pdf = new FPDF('P','mm','Legal');
+$pdf->AddPage();
+$pdf->SetAutoPageBreak(false);
+if (method_exists($pdf, 'SetCellMargin')) {
+  $pdf->SetCellMargin(0.6);
+}
+
+// Colores tipo plantilla
+$BLUE = [0, 70, 140];
+$FILL = [220, 230, 245];
+
+$pdf->SetDrawColor($BLUE[0], $BLUE[1], $BLUE[2]);
+$pdf->SetLineWidth(0.35);
+$pdf->SetTextColor(0,0,0);
+
+// ===== Helpers =====
+function rect($pdf, $x, $y, $w, $h, $fill=false){
+  $pdf->Rect($x, $y, $w, $h, $fill ? 'F' : '');
+}
+function hline($pdf, $x1,$y,$x2){ $pdf->Line($x1,$y,$x2,$y); }
+function vline($pdf, $x,$y1,$y2){ $pdf->Line($x,$y1,$x,$y2); }
+
+function cellText($pdf, $x, $y, $w, $h, $text, $align='L', $style='', $fs=8){
+  $pdf->SetFont('Helvetica', $style, $fs);
+  $pdf->SetXY($x,$y);
+  $pdf->Cell($w,$h, htxt($text), 0, 0, $align);
+}
+
+function fitCellText($pdf, $x, $y, $w, $h, $text, $align='L', $style='', $base=8, $min=6){
+  $text = trim((string)$text);
+  $fs = $base;
+  $pdf->SetFont('Helvetica', $style, $fs);
+  while ($fs > $min && $pdf->GetStringWidth(htxt($text)) > ($w-1.0)) {
+    $fs -= 0.5;
+    $pdf->SetFont('Helvetica', $style, $fs);
+  }
+  if ($pdf->GetStringWidth(htxt($text)) > ($w-1.0)) {
+    while ($text !== '' && $pdf->GetStringWidth(htxt($text.'...')) > ($w-1.0)) {
+      $text = substr($text, 0, -1);
+    }
+    $text .= '...';
+  }
+  cellText($pdf, $x, $y, $w, $h, $text, $align, $style, $fs);
+}
+
+function wrapWordsToLines($pdf, $text, $maxW, $fontFamily='Helvetica', $style='', $fs=7, $maxLines=2){
+  $text = trim((string)$text);
+  if ($text === '') return [''];
+
+  $pdf->SetFont($fontFamily, $style, $fs);
+  $words = preg_split('/\s+/', $text);
+  $lines = [];
+  $current = '';
+
+  foreach ($words as $w) {
+    $test = ($current === '') ? $w : ($current . ' ' . $w);
+    if ($pdf->GetStringWidth(htxt($test)) <= $maxW) {
+      $current = $test;
+    } else {
+      if ($current === '') {
+        $cut = $w;
+        while ($cut !== '' && $pdf->GetStringWidth(htxt($cut.'...')) > $maxW) {
+          if (function_exists('mb_substr') && function_exists('mb_strlen')) {
+            $cut = mb_substr($cut, 0, mb_strlen($cut)-1);
+          } else {
+            $cut = substr($cut, 0, -1);
+          }
+        }
+        $lines[] = $cut;
+        $current = '';
+      } else {
+        $lines[] = $current;
+        $current = $w;
+      }
+    }
+    if (count($lines) >= $maxLines) break;
+  }
+
+  if (count($lines) < $maxLines && $current !== '') $lines[] = $current;
+
+  if (count($lines) === $maxLines) {
+    $last = $lines[$maxLines-1];
+    if ($pdf->GetStringWidth(htxt($last)) > $maxW) {
+      while ($last !== '' && $pdf->GetStringWidth(htxt($last.'...')) > $maxW) {
+        if (function_exists('mb_substr') && function_exists('mb_strlen')) {
+          $last = mb_substr($last, 0, mb_strlen($last)-1);
+        } else {
+          $last = substr($last, 0, -1);
+        }
+      }
+    }
+    $lines[$maxLines-1] = rtrim($last);
+  }
+
+  return $lines;
+}
+
+function labelCellWrap($pdf, $x0, $y0, $w, $h, $text){
+  $base = 7.0;
+  $min  = 5.6;
+
+  for ($fs = $base; $fs >= $min; $fs -= 0.2) {
+    $pdf->SetFont('Helvetica', 'B', $fs);
+    if ($pdf->GetStringWidth(htxt($text)) <= ($w - 1.0)) {
+      $pdf->SetXY($x0, $y0);
+      $pdf->Cell($w, $h, htxt($text), 0, 0, 'L');
+      return;
+    }
+  }
+
+  $fs = 6.0;
+  $pdf->SetFont('Helvetica', 'B', $fs);
+  $lines = wrapWordsToLines($pdf, $text, $w - 1.0, 'Helvetica', 'B', $fs, 2);
+
+  $lineH = $h / 2;
+  $startY = $y0 + 0.2;
+  $pdf->SetXY($x0, $startY);
+  $pdf->Cell($w, $lineH, htxt($lines[0] ?? ''), 0, 2, 'L');
+  $pdf->Cell($w, $lineH, htxt($lines[1] ?? ''), 0, 2, 'L');
+}
+
+function headerBar($pdf, $x, $y, $w, $h, $title){
+  global $FILL, $BLUE;
+  $pdf->SetFillColor($FILL[0], $FILL[1], $FILL[2]);
+  rect($pdf, $x, $y, $w, $h, true);
+  $pdf->SetDrawColor($BLUE[0], $BLUE[1], $BLUE[2]);
+  $pdf->Rect($x, $y, $w, $h);
+  cellText($pdf, $x, $y+0.7, $w, $h, $title, 'C', 'B', 8.5);
+}
+
+function wrapTextToLines($pdf, $text, $maxW, $font='Helvetica', $style='', $fs=7.2){
+  $text = trim((string)$text);
+  if ($text === '') return [''];
+
+  $pdf->SetFont($font, $style, $fs);
+
+  $words = preg_split('/\s+/', $text);
+  $lines = [];
+  $line = '';
+
+  foreach ($words as $w) {
+    $test = ($line === '') ? $w : ($line.' '.$w);
+    if ($pdf->GetStringWidth(htxt($test)) <= $maxW) {
+      $line = $test;
+    } else {
+      if ($line !== '') $lines[] = $line;
+      $line = $w;
+    }
+  }
+  if ($line !== '') $lines[] = $line;
+
+  return $lines;
+}
+
+function fitMultiTextToBox($pdf, $x, $y, $w, $h, $text, $font='Helvetica', $style='', $baseFs=7.2, $minFs=6.0, $lineH=3.6){
+  // Intenta bajando fuente hasta que quepa en alto
+  for ($fs = $baseFs; $fs >= $minFs; $fs -= 0.2) {
+    $lines = wrapTextToLines($pdf, $text, $w, $font, $style, $fs);
+    $needH = count($lines) * $lineH;
+    if ($needH <= $h) {
+      $pdf->SetFont($font, $style, $fs);
+      $pdf->SetXY($x, $y);
+      foreach ($lines as $ln) {
+        $pdf->Cell($w, $lineH, htxt($ln), 0, 2, 'L');
+      }
+      return;
+    }
+  }
+
+  // Si aun asi no cabe: recorta con "..."
+  $fs = $minFs;
+  $pdf->SetFont($font, $style, $fs);
+  $lines = wrapTextToLines($pdf, $text, $w, $font, $style, $fs);
+
+  $maxLines = (int)floor($h / $lineH);
+  $lines = array_slice($lines, 0, max(1,$maxLines));
+
+  // agrega "..." al final si recortamos
+  $last = end($lines);
+  $last = rtrim($last);
+  while ($last !== '' && $pdf->GetStringWidth(htxt($last.'...')) > $w) {
+    $last = substr($last, 0, -1);
+  }
+  $lines[count($lines)-1] = $last.'...';
+
+  $pdf->SetXY($x, $y);
+  foreach ($lines as $ln) {
+    $pdf->Cell($w, $lineH, htxt($ln), 0, 2, 'L');
+  }
+}
+
+function fitMultiTextToBoxCentered($pdf, $x, $y, $w, $h, $text, $font='Helvetica', $style='', $baseFs=7.2, $minFs=6.0, $lineH=3.6){
+  for ($fs = $baseFs; $fs >= $minFs; $fs -= 0.2) {
+    $lines = wrapTextToLines($pdf, $text, $w, $font, $style, $fs);
+    $needH = count($lines) * $lineH;
+    if ($needH <= $h) {
+      $pdf->SetFont($font, $style, $fs);
+      $startY = $y + ($h - $needH)/2;
+      $pdf->SetXY($x, $startY);
+      foreach ($lines as $ln) {
+        $pdf->Cell($w, $lineH, htxt($ln), 0, 2, 'C');
+      }
+      return;
+    }
+  }
+
+  // fallback: recorta con ...
+  $fs = $minFs;
+  $pdf->SetFont($font, $style, $fs);
+  $lines = wrapTextToLines($pdf, $text, $w, $font, $style, $fs);
+
+  $maxLines = (int)floor($h / $lineH);
+  $lines = array_slice($lines, 0, max(1,$maxLines));
+
+  $last = rtrim(end($lines));
+  while ($last !== '' && $pdf->GetStringWidth(htxt($last.'...')) > $w) {
+    $last = substr($last, 0, -1);
+  }
+  $lines[count($lines)-1] = $last.'...';
+
+  $needH = count($lines)*$lineH;
+  $startY = $y + ($h - $needH)/2;
+  $pdf->SetXY($x, $startY);
+  foreach ($lines as $ln) {
+    $pdf->Cell($w, $lineH, htxt($ln), 0, 2, 'C');
+  }
+}
+
+function drawFillCell($pdf, $x, $y, $w, $h, $txt, $fillRGB = null, $border=1, $align='C', $fs=7, $bold=false){
+  // Fondo + borde
+  $pdf->SetXY($x,$y);
+  $pdf->SetDrawColor(0,70,140);
+
+  if ($fillRGB) {
+    $pdf->SetFillColor($fillRGB[0], $fillRGB[1], $fillRGB[2]);
+    // texto blanco si es fondo oscuro
+    if ($fillRGB[0] < 120 && $fillRGB[1] < 120) $pdf->SetTextColor(255,255,255);
+    else $pdf->SetTextColor(0,0,0);
+    $pdf->Rect($x,$y,$w,$h,'DF'); // Draw+Fill
+  } else {
+    $pdf->SetTextColor(0,0,0);
+    $pdf->Rect($x,$y,$w,$h,'D');  // Draw
+  }
+
+  // Texto con ajuste automÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡tico
+  $style = $bold ? 'B' : '';
+  $pad = 1.2;
+
+  // Si es texto largo o tiene saltos, lo ajustamos al cuadro (nunca se sale)
+  $needsWrap = (strpos($txt, "\n") !== false) || (strlen($txt) > 18);
+
+  if ($needsWrap) {
+    // IMPORTANTE: fitMultiTextToBox escribe alineado a la izquierda; lo dejamos con un padding para que se vea bien.
+    // (Si quieres centrado real lÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Ânea a lÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Ânea tambiÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©n se puede, pero asÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ya no se sale nunca.)
+    fitMultiTextToBox(
+      $pdf,
+      $x + $pad,
+      $y + 0.6,
+      $w - ($pad*2),
+      $h - 1.2,
+      $txt,
+      'Helvetica',
+      $style,
+      $fs,
+      max(5.6, $fs-1.4),
+      3.2
+    );
+  } else {
+    $pdf->SetFont('Helvetica', $style, $fs);
+    $pdf->SetXY($x,$y);
+    $pdf->Cell($w,$h, htxt($txt), 0, 0, $align, false);
+  }
+
+  // Reset
+  $pdf->SetTextColor(0,0,0);
+}
+
+function drawTablaRangosPeq($pdf, $x, $y, $w) {
+  $cHead   = [230, 230, 230];
+  $c1 = [123, 255, 46];   // verde claro
+  $c2 = [0, 128, 0];      // verde
+  $c3 = [128, 128, 0];    // oliva
+  $c4 = [255, 140, 0];    // naranjo
+  $c5 = [132, 132, 189];  // lila
+  $c6 = [255, 0, 0];      // rojo
+  $c7 = [128, 0, 0];      // rojo oscuro
+  $c8 = [0, 0, 0];        // negro
+
+  $hRow = 3.8;
+  $cw = [$w * 0.25, $w * 0.35, $w * 0.40];
+
+  drawFillCell($pdf, $x, $y, $w, $hRow, "Rangos de Pendientes", $cHead, 1, 'C', 6.2, true);
+  $yy = $y + $hRow;
+
+  drawFillCell($pdf, $x, $yy, $cw[0], $hRow, "Color", $cHead, 1, 'C', 5.8, true);
+  drawFillCell($pdf, $x + $cw[0], $yy, $cw[1], $hRow, "Porcentaje (%)", $cHead, 1, 'C', 5.8, true);
+  drawFillCell($pdf, $x + $cw[0] + $cw[1], $yy, $cw[2], $hRow, "Grados (°)", $cHead, 1, 'C', 5.8, true);
+  $yy += $hRow;
+
+  $rows = [
+    [$c1, "0 a 30",   "0,00 a 16,70"],
+    [$c2, "30 a 40",  "16,70 a 21,80"],
+    [$c3, "40 a 50",  "21,80 a 26,57"],
+    [$c4, "50 a 60",  "26,57 a 30,96"],
+    [$c5, "60 a 70",  "30,96 a 34,99"],
+    [$c6, "70 a 90",  "34,99 a 41,99"],
+    [$c7, "90 a 100", "41,99 a 45,00"],
+    [$c8, "100 +",    "45 +"]
+  ];
+
+  foreach ($rows as $r) {
+    $pdf->SetFillColor($r[0][0], $r[0][1], $r[0][2]);
+    $pdf->Rect($x, $yy, $cw[0], $hRow, 'DF');
+    $pdf->Rect($x, $yy, $cw[0], $hRow, 'D');
+
+    drawFillCell($pdf, $x + $cw[0], $yy, $cw[1], $hRow, $r[1], null, 1, 'C', 6.2);
+    drawFillCell($pdf, $x + $cw[0] + $cw[1], $yy, $cw[2], $hRow, $r[2], null, 1, 'C', 6.2);
+
+    $yy += $hRow;
+  }
+}
+
+function drawDecisionMatrix($pdf, $x, $y, $w, $h){
+  // Colores (muy parecidos a la imagen)
+  $cGreen  = [118, 190,  70];
+  $cYellow = [255, 235,  90];
+  $cRed    = [235,  55,  55];
+  $cHead   = [230, 230, 230];
+  $cPend   = [235, 235, 120]; // amarillo "Pendiente"
+
+  // Datos EXACTOS de tu imagen:
+  // %min, %max, gmin, gmax, seco, humedo, saturado/rocoso
+  $rows = [
+    ['0','10','0','6',    ['No asistir',$cGreen],  ['No asistir',$cGreen],  ['No asistir',$cGreen]],
+    ['11','20','6','11',  ['No asistir',$cGreen],  ['No asistir',$cGreen],  ['Evaluar',$cYellow]],
+    ['21','30','12','16', ['No asistir',$cGreen],  ['No asistir',$cGreen],  ['Asistir 50',$cRed]],
+    ['31','40','17','22', ['No asistir',$cGreen],  ['Asistir 50',$cRed],    ['Asistir 70',$cRed]],
+    ['41','50','23','26', ['Asistir 50',$cRed],    ['Asistir 85',$cRed],    ['Asistir 120',$cRed]],
+    ['51','60','27','30', ['Asistir 80',$cRed],    ['Asistir 120',$cRed],   ['Asistir 140',$cRed]],
+    ['61','70','31','35', ['Asistir 135',$cRed],   ['Asistir 140',$cRed],   ['Asistir 150',$cRed]],
+    ['71','84','35','40', ['Asistir 150',$cRed],   ['Asistir 150',$cRed],   ['Asistir 150',$cRed]],
+    ['85','98','40','44', ['Asistir 150',$cRed],   ['Asistir 150',$cRed],   ['Asistir 150',$cRed]],
+    ['100','130','45','52',['Asistir 150',$cRed],  ['Asistir 150',$cRed],   ['Asistir 150',$cRed]],
+  ];
+
+  // Layout columnas (como la foto)
+  // %min | %max | gmin | gmax | seco | humedo | saturado/rocoso
+  $col = [0.08, 0.08, 0.08, 0.08, 0.23, 0.23, 0.22];
+  $cw = array_map(function($p) use ($w){ return $w * $p; }, $col);
+
+  // Alturas
+  $hTitle1 = $h * 0.12;     // tÃtulo grande arriba
+  $hTitle2 = 0;             // ya no se usa (lo movemos)
+  $hHeader = $h * 0.18;     // un poquito mÃ¡s alto para el bloque kN
+  $hSub    = $h * 0.12;     // aquÃ irÃ¡n Suelo Seco / hÃºmedo / rocoso
+  $dataH   = $h - ($hTitle1+$hTitle2+$hHeader+$hSub);
+  $rh      = $dataH / max(1, count($rows));
+
+  // ===== TÃtulos superiores =====
+  drawFillCell($pdf, $x, $y, $w, $hTitle1,
+    "Propuesta nueva Matriz de decisiones para equipo T-WINCH 30.2 (kN)",
+    $cHead, 1, 'C', 7.1, true
+  );
+
+  // ===== Header columnas =====
+  $yy = $y + $hTitle1; // ojo: ya no usamos hTitle2
+  $xx = $x;
+
+  // Pendiente (abarca 4 columnas)
+  drawFillCell($pdf, $xx, $yy, $cw[0]+$cw[1]+$cw[2]+$cw[3], $hHeader,
+    "Pendiente",
+    $cPend, 1, 'C', 7.2, true
+  );
+  $xx += $cw[0]+$cw[1]+$cw[2]+$cw[3];
+
+  // Bloque grande kN (abarca 3 columnas de suelos)
+  drawFillCell($pdf, $xx, $yy, $cw[4]+$cw[5]+$cw[6], $hHeader,
+    "kN necesarios en volteo segÃºn condiciones de suelo, humedad y roca para equipo T-WINCH 30.2 (kN)",
+    $cPend, 1, 'C', 6.4, true
+  );
+
+  // ===== Subheader =====
+  $yy = $yy + $hHeader;
+  $xx = $x;
+
+  drawFillCell($pdf, $xx, $yy, $cw[0]+$cw[1], $hSub, "Rangos de porcentaje\n%", null, 1, 'C', 6.8, false);
+  $xx += ($cw[0]+$cw[1]);
+
+  drawFillCell($pdf, $xx, $yy, $cw[2]+$cw[3], $hSub, "Grados", null, 1, 'C', 6.8, false);
+  $xx += ($cw[2]+$cw[3]);
+
+  drawFillCell($pdf, $xx, $yy, $cw[4], $hSub, "Suelo Seco", $cHead, 1, 'C', 6.6, true);  $xx += $cw[4];
+  drawFillCell($pdf, $xx, $yy, $cw[5], $hSub, "Suelo hÃºmedo", $cHead, 1, 'C', 6.6, true); $xx += $cw[5];
+  drawFillCell($pdf, $xx, $yy, $cw[6], $hSub, "Suelo saturado/Manto\nrocoso", $cHead, 1, 'C', 6.1, true);
+
+  // ===== Filas de datos =====
+  $yy = $yy + $hSub;
+
+  foreach($rows as $r){
+    $xx = $x;
+
+    drawFillCell($pdf, $xx, $yy, $cw[0], $rh, $r[0], null, 1, 'C', 6.8); $xx += $cw[0];
+    drawFillCell($pdf, $xx, $yy, $cw[1], $rh, $r[1], null, 1, 'C', 6.8); $xx += $cw[1];
+    drawFillCell($pdf, $xx, $yy, $cw[2], $rh, $r[2], null, 1, 'C', 6.8); $xx += $cw[2];
+    drawFillCell($pdf, $xx, $yy, $cw[3], $rh, $r[3], null, 1, 'C', 6.8); $xx += $cw[3];
+
+    drawFillCell($pdf, $xx, $yy, $cw[4], $rh, $r[4][0], $r[4][1], 1, 'C', 6.8, true); $xx += $cw[4];
+    drawFillCell($pdf, $xx, $yy, $cw[5], $rh, $r[5][0], $r[5][1], 1, 'C', 6.8, true); $xx += $cw[5];
+    drawFillCell($pdf, $xx, $yy, $cw[6], $rh, $r[6][0], $r[6][1], 1, 'C', 6.8, true);
+
+    $yy += $rh;
+  }
+
+  $pdf->SetTextColor(0,0,0);
+}
+
+function drawWarningBox($pdf, $x, $y, $w, $h){
+
+  // Fondo beige
+  $pdf->SetFillColor(243, 233, 219);
+  $pdf->Rect($x, $y, $w, $h, 'F');
+
+  $orange = [226, 135, 15];
+  $gray   = [95,95,95];
+
+  // MÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡rgenes internos
+  $pad = 3.0;
+
+  // ==== Icono triÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ngulo ====
+  $triW = min(16, $w * 0.22);
+  $triH = $triW * 0.92;
+
+  $cx = $x + $pad + ($triW/2);
+  $cy = $y + ($h * 0.42);
+
+  $pdf->SetDrawColor($orange[0], $orange[1], $orange[2]);
+  $pdf->SetLineWidth(1.0);
+
+  $x1 = $cx;              $y1 = $cy - ($triH/2);
+  $x2 = $cx - ($triW/2);   $y2 = $cy + ($triH/2);
+  $x3 = $cx + ($triW/2);   $y3 = $cy + ($triH/2);
+
+  $pdf->Line($x1,$y1,$x2,$y2);
+  $pdf->Line($x2,$y2,$x3,$y3);
+  $pdf->Line($x3,$y3,$x1,$y1);
+
+  // "!"
+  $pdf->SetTextColor($orange[0], $orange[1], $orange[2]);
+  $pdf->SetFont('Helvetica','B',16);
+  $pdf->SetXY($cx-2.8, $cy-7.0);
+  $pdf->Cell(6,12,'!',0,0,'C');
+
+  // ==== TÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âtulo ====
+  $titleX = $x + $pad + $triW + 3.5;
+  $titleY = $y + $pad + 1.0;
+
+  $pdf->SetFont('Helvetica','B',10);
+  $pdf->SetXY($titleX, $titleY);
+  $pdf->Cell($w - ($titleX - $x) - $pad, 5, htxt("Advertencia"), 0, 0, 'L');
+
+  // ==== Texto (auto-ajustado al alto) ====
+  $txt = "El uso adecuado de las tensiones debe estar relacionado con la pendiente y los puntos de contacto del cable de acero. Cabe destacar que el equipo es capaz de tensar el cable hasta un lÃƒÆ’Ã‚Âmite de 150 kN (aproximadamente 15 toneladas). A partir de este punto, si se requiere mayor tracciÃƒÆ’Ã‚Â³n, la tecnologÃƒÆ’Ã‚Âa del sistema de asistencia ajusta automÃƒÆ’Ã‚Â¡ticamente la tensiÃƒÆ’Ã‚Â³n segÃƒÆ’Ã‚Âºn las necesidades operativas del equipo, especialmente cuando se supera una fuerza de 150 kN, asegurando asÃƒÆ’Ã‚Â la seguridad del sistema.";
+
+  $textX = $titleX;
+  $textY = $titleY + 6.0;
+
+  $textW = $w - ($textX - $x) - $pad;
+  $bottomPad = 5.0; // aire extra para que no se vea ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œcortadoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â
+  $textH = $h - ($textY - $y) - $bottomPad;
+
+  $pdf->SetTextColor($gray[0], $gray[1], $gray[2]);
+
+  // Nunca se sale del cuadro
+  fitMultiTextToBox($pdf, $textX, $textY, $textW-1.5, $textH, $txt, 'Helvetica', '', 7.2, 5.2, 3.2);
+
+  // Reset
+  $pdf->SetTextColor(0,0,0);
+  $pdf->SetDrawColor(0,70,140);
+  $pdf->SetLineWidth(0.35);
+}
+
+function wrapLines($text){
+  $text = trim((string)$text);
+  if ($text === '') return [];
+  $raw = preg_split('/\r\n|\r|\n/', $text);
+  $out = [];
+  foreach ($raw as $l){
+    $l = trim(preg_replace('/^[\-\*\x{2022}]+\s*/u', '', (string)$l));
+    if ($l !== '') $out[] = $l;
+  }
+  return $out;
+}
+
+// ===== Layout (mm) =====
+$L = 6.5;           // margen izq
+$R = 209.5;         // borde der aprox (letter 216mm - margen)
+$W = $R - $L;
+
+$y0 = 8.0;
+
+// ====== ENCABEZADO (igual estilo) ======
+$headerH = 18.0;
+rect($pdf, $L, $y0, $W, $headerH); // marco total header
+
+// Bloque logo (izq)
+$logoW = 26.0;
+rect($pdf, $L, $y0, $logoW, $headerH);
+
+// Bloque tÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âtulo (centro)
+$titleX = $L + $logoW;
+$titleW = $W - $logoW - 55.0;
+rect($pdf, $titleX, $y0, $titleW, $headerH);
+
+// Bloque DOC/VERSION (der)
+$metaW = 55.0;
+$metaX = $R - $metaW;
+rect($pdf, $metaX, $y0, $metaW, $headerH);
+
+// Divisiones internas header (tipo imagen)
+hline($pdf, $L, $y0+6.0, $R);
+hline($pdf, $L, $y0+12.0, $R);
+
+vline($pdf, $metaX + 16.0, $y0, $y0+6.0);     // DOC label area
+vline($pdf, $metaX + 16.0, $y0+6.0, $y0+12.0);// VERSION label area
+vline($pdf, $metaX + 40.0, $y0, $y0+6.0);     // DOC value split
+vline($pdf, $metaX + 40.0, $y0+6.0, $y0+12.0);// VERSION value split
+
+// Textos header
+cellText($pdf, $titleX, $y0+1.2, $titleW, 5, "PLAN INTERVENCIÃƒÆ’Ã¢â‚¬Å“N DE VOLTEO", 'C', 'B', 10);
+cellText($pdf, $titleX, $y0+7.3, $titleW, 5, "LÃƒÆ’Ã‚ÂNEAS DE MADEREO A INTERVENIR", 'C', 'B', 8.5);
+cellText($pdf, $titleX, $y0+13.3, $titleW, 4, "COSECHA", 'C', 'B', 8.0);
+
+cellText($pdf, $metaX, $y0+1.2, 16.0, 5, "DOC:", 'C', 'B', 8);
+cellText($pdf, $metaX+16.0, $y0+1.2, 24.0, 5, "RE-TL-AP-01", 'C', 'B', 8);
+cellText($pdf, $metaX+40.0, $y0+1.2, 15.0, 5, "", 'C', 'B', 8);
+
+cellText($pdf, $metaX, $y0+7.3, 16.0, 5, "VERSION:", 'C', 'B', 8);
+cellText($pdf, $metaX+16.0, $y0+7.3, 24.0, 5, "", 'C', 'B', 8);
+cellText($pdf, $metaX+40.0, $y0+7.3, 15.0, 5, "2", 'C', 'B', 8);
+
+// (Logo: si tienes imagen, descomenta y ajusta)
+// $pdf->Image(__DIR__.'/templates/logo_millalemu.png', $L+2, $y0+2, 22, 0);
+
+// ====== ANTECEDENTES GENERALES ======
+$y = $y0 + $headerH + 2.0;
+
+// Barra de tÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âtulo
+headerBar($pdf, $L, $y, $W, 6.0, "Antecedentes Generales");
+$y += 6.0;
+
+// Caja antecedentes
+$hAnte = 56.0;
+rect($pdf, $L, $y, $W, $hAnte);
+
+// Columnas principales (igual a tu idea)
+$xL  = $L;
+$xC1 = $L + 28.0;          // fin labels izq
+$xC2 = $L + 83.0;          // fin valores izq
+$xC3 = $L + 120.0;         // fin labels der
+$xC4 = $L + 168.0;         // fin valores der (antes de subcol)
+$xR  = $R;
+
+vline($pdf, $xC1, $y, $y+$hAnte);
+vline($pdf, $xC2, $y, $y+$hAnte);
+vline($pdf, $xC3, $y, $y+$hAnte);
+
+// Subcolumnas derechas solo donde corresponde (fila de superficie/vol y arboles/m3)
+$xSub1 = $L + 141.0; // dentro de lado derecho (para Superficie)
+$xSub2 = $L + 170.0; // dentro de lado derecho (para VOL TOTAL)
+vline($pdf, $xSub1, $y+12.0, $y+24.0); // 2 filas (VMA/Sup/Vol) y (ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Ârb/m3)
+vline($pdf, $xSub2, $y+12.0, $y+24.0);
+
+// Filas antecedentes (10 filas como imagen aprox)
+$rowH = 5.6;
+for($i=1;$i<=10;$i++){
+  hline($pdf, $xL, $y + $rowH*$i, $xR);
+}
+// LÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Ânea mÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s marcada donde va ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œJefe de faenaÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â alto (como plantilla)
+hline($pdf, $xL, $y + $rowH*7, $xR);
+
+// Labels izquierda
+$labelsLeft = [
+  "Fecha",
+  "",
+  "Predio- Codigo",
+  "Escenario",
+  "Team-Equipo",
+  "Tecnologia",
+  "Asistencia/Tipo",
+  "Jefe de Faena",
+  "Volteo cercano a tendido electrico",
+  "Volteo cercano a camino publico",
+];
+$labelW = ($xC1 - $xL) - 2.4;
+$labelH = $rowH - 0.4;
+for($i=0;$i<count($labelsLeft);$i++){
+  $y0Label = $y + $rowH*$i + 0.4;
+  labelCellWrap($pdf, $xL+1.2, $y0Label, $labelW, $labelH, $labelsLeft[$i]);
+}
+
+// Labels derecha (alineadas a filas)
+$labelsRight = [
+  "Temporada",
+  "Especie",
+  "VMA (m3/arb)",
+  "", // fila compuesta (Superficie/Vol total) ya se etiqueta arriba
+  "Arboles/hora",
+  "", // fila compuesta
+  "Uso de Pivotes",
+  "Tiempos estimado de volteo (Dias)",
+  "Pendiente maxima (%)",
+  "Tipo de Suelo",
+  "Verificacion de permisos",
+  "Jornada",
+];
+
+// Etiquetas derecha especÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ficas (como plantilla)
+cellText($pdf, $xC2+1.2, $y + $rowH*0 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Temporada", 'L', 'B', 8);
+cellText($pdf, $xC2+1.2, $y + $rowH*1 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Especie", 'L', 'B', 8);
+cellText($pdf, $xC2+1.2, $y + $rowH*2 + 1.0, ($xC3-$xC2)-2.0, $rowH, "VMA (m3/arb)", 'L', 'B', 8);
+
+// fila 3: Superficie / VOL TOTAL Esc
+cellText($pdf, $xC2+1.2, $y + $rowH*3 + 1.0, ($xSub1-$xC2)-2.0, $rowH, "Superficie (ha)", 'L', 'B', 8);
+cellText($pdf, $xSub1+1.2, $y + $rowH*3 + 1.0, ($xSub2-$xSub1)-2.0, $rowH, "VOL TOTAL Esc (m3)", 'L', 'B', 8);
+
+// fila 4: ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Ârboles/hora
+cellText($pdf, $xC2+1.2, $y + $rowH*4 + 1.0, ($xSub1-$xC2)-2.0, $rowH, "Arboles/hora", 'L', 'B', 8);
+
+cellText($pdf, $xC2+1.2, $y + $rowH*5 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Uso de Pivotes", 'L', 'B', 8);
+fitCellText($pdf, $xC2+1.2, $y + $rowH*6 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Tiempo estimado de volteo (Dias)", 'L', 'B', 7, 5.6);
+cellText($pdf, $xC2+1.2, $y + $rowH*7 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Pendiente maxima (%)", 'L', 'B', 8);
+cellText($pdf, $xC2+1.2, $y + $rowH*8 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Tipo de Suelo", 'L', 'B', 8);
+cellText($pdf, $xC2+1.2, $y + $rowH*9 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Verificacion de permisos", 'L', 'B', 8);
+// Jornada queda debajo del bloque: en la plantilla estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ en la misma columna, ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âºltima fila (si te queda apretado, se ajusta)
+cellText($pdf, $xC2+1.2, $y + $rowH*10 + 1.0, ($xC3-$xC2)-2.0, $rowH, "Jornada", 'L', 'B', 8);
+
+// ===== Valores (izquierda) =====
+$fecha = $row['fecha'] ? date('d-m-Y', strtotime($row['fecha'])) : '';
+$predioCodigo = trim(($row['predio'] ?? '') . ' // ' . ($row['codigo_predio'] ?? ''));
+$escenario = $row['escenario'] ?: ($row['nombre_mapa'] ?? '');
+
+$valsLeft = [
+  $fecha,
+  '',
+  $predioCodigo,
+  $escenario,
+  $row['team_equipo'] ?? '',
+  $row['tecnologia'] ?? '',
+  $row['asistencia_tipo'] ?? '',
+  $row['jefe_faena'] ?? '',
+  boolSI($row['volteo_cerca_tendido_electrico'] ?? 0),
+  boolSI($row['volteo_cerca_camino_publico'] ?? 0),
+];
+for($i=0;$i<count($valsLeft);$i++){
+  fitCellText($pdf, $xC1+1.2, $y + $rowH*$i + 1.0, ($xC2-$xC1)-2.4, $rowH, $valsLeft[$i], 'L', '', 8, 6);
+}
+
+// ===== Valores (derecha) =====
+// Temporada (fila 0)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*0 + 1.0, ($xR-$xC3)-2.4, $rowH, $row['temporada'] ?? '', 'L', '', 8, 6);
+// Especie (fila 1)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*1 + 1.0, ($xR-$xC3)-2.4, $rowH, $row['especie'] ?? '', 'L', '', 8, 6);
+// VMA (fila 2)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*2 + 1.0, ($xR-$xC3)-2.4, $rowH, asNum($row['vma_m3_arb'] ?? '', 2), 'L', '', 8, 6);
+
+// Superficie / Vol total (fila 3)
+fitCellText($pdf, $xC3+1.2,  $y + $rowH*3 + 1.0, ($xSub1-$xC3)-2.4, $rowH, asNum($row['superficie_ha'] ?? '', 2), 'R', '', 8, 6);
+fitCellText($pdf, $xSub1+1.2, $y + $rowH*3 + 1.0, ($xR-$xSub1)-2.4, $rowH, asNum($row['volumen_total_m3'] ?? '', 0), 'R', '', 8, 6);
+
+// ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Ârboles/hora (fila 4)
+fitCellText($pdf, $xC3+1.2,  $y + $rowH*4 + 1.0, ($xSub1-$xC3)-2.4, $rowH, asNum($row['arboles_hora'] ?? '', 2), 'R', '', 8, 6);
+
+// Uso pivotes (fila 5)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*5 + 1.0, ($xR-$xC3)-2.4, $rowH, boolSI($row['uso_pivotes'] ?? 0), 'L', '', 8, 6);
+// Tiempo (fila 6)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*6 + 1.0, ($xR-$xC3)-2.4, $rowH, asNum($row['tiempo_estimado_dias'] ?? '', 2), 'L', '', 8, 6);
+// Pendiente (fila 7)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*7 + 1.0, ($xR-$xC3)-2.4, $rowH, asNum($row['pendiente_max_pct'] ?? '', 2), 'L', '', 8, 6);
+// Tipo suelo (fila 8)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*8 + 1.0, ($xR-$xC3)-2.4, $rowH, $row['tipo_suelo'] ?? '', 'L', '', 7.5, 6);
+// Verif (fila 9)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*9 + 1.0, ($xR-$xC3)-2.4, $rowH, $row['verif_permisos'] ?? '', 'L', '', 7.5, 6);
+// Jornada (fila 10, justo debajo; si te queda muy abajo, lo movemos)
+fitCellText($pdf, $xC3+1.2, $y + $rowH*10 + 1.0, ($xR-$xC3)-2.4, $rowH, $row['jornada'] ?? '', 'L', '', 8, 6);
+
+$y = $y + $hAnte + 2.0;
+
+// ====== CONSIDERACIONES IMPORTANTES Y MEDIDAS ======
+headerBar($pdf, $L, $y, $W, 6.0, "Consideraciones importantes y medidas");
+$y += 6.0;
+
+// Caja con 4 renglones (como imagen)
+$hCons = 28.0;
+rect($pdf, $L, $y, $W, $hCons);
+$lineH = $hCons / 4.0;
+for($i=1;$i<=3;$i++){
+  hline($pdf, $L, $y + $lineH*$i, $R);
+}
+
+// Textos (si no quieres texto aquÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­, comenta esto)
+$lines = array_merge(wrapLines($row['consideraciones'] ?? ''), wrapLines($row['medidas'] ?? ''));
+for($i=0;$i<4;$i++){
+  $txt = $lines[$i] ?? '';
+  // en la plantilla se ve como lÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­neas, pero aquÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ permitimos texto igual
+  fitCellText($pdf, $L+10, $y + $lineH*$i + 1.2, $W-12, $lineH, $txt, 'L', '', 7.5, 6);
+  // numeraciÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n 1.- 2.- ...
+  cellText($pdf, $L+2, $y + $lineH*$i + 1.2, 8, $lineH, ($i+1).".-", 'L', 'B', 8);
+}
+
+$y = $y + $hCons + 2.0;
+
+// ====== PLANO DE PENDIENTES Y ACTA ======
+headerBar($pdf, $L, $y, $W, 6.0, "Plano de Pendientes y Acta de Intervencion");
+$y += 6.0;
+
+$hPlano = 88.0; // caja grande original (la dejamos tal cual)
+rect($pdf, $L, $y, $W, $hPlano);
+
+// Ancho de la tablita pequeña
+$wTabla = 50.0;
+
+// Calculamos la posición X para que quede pegada a la derecha (con 2mm de margen)
+$xTablaDer = ($L + $W) - $wTabla - 2.0;
+
+// Dibujamos la tablita en la esquina superior DERECHA de este recuadro.
+drawTablaRangosPeq($pdf, $xTablaDer, $y + 2.0, $wTabla);
+
+// (AquÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â en el futuro puedes insertar imagen del plano si quieres)
+// $pdf->Image('ruta.png', $L+2, $y+2, $W-4, $hPlano-4);
+
+$y = $y + $hPlano + 2.0;
+
+// ====== TABLA ASISTENCIA ======
+headerBar($pdf, $L, $y, $W, 6.0, "Tabla de asistencia en matriz de decisiones.");
+$y += 6.0;
+
+$hAsis = 68.0;
+rect($pdf, $L, $y, $W, $hAsis);
+
+$m = 1.5;
+$ix = $L + $m;
+$iy = $y + $m;
+$iw = $W - ($m*2);
+$ih = $hAsis - ($m*2);
+
+$tableW = $iw * 0.62;
+$gap    = 2.0;
+$warnW  = $iw - $tableW - $gap;
+
+drawDecisionMatrix($pdf, $ix, $iy, $tableW, $ih);
+drawWarningBox($pdf, $ix + $tableW + $gap, $iy, $warnW, $ih);
+
+// (Tu imagen ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œlimpiaÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â la deja vacÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âa. Si quieres meter la tabla y advertencia, se hace despuÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s.)
+$y = $y + $hAsis + 2.0;
+
+// ====== TOMA CONOCIMIENTO ======
+headerBar($pdf, $L, $y, $W, 6.0, "TOMA CONOCIMIENTO DE PLANIFICACION");
+$y += 6.0;
+
+$hToma = 18.0;
+rect($pdf, $L, $y, $W, $hToma);
+
+// 3 columnas: Cargo | Nombre | Firma
+$xCargo = $L + 48.0;
+$xNom   = $L + 156.0;
+vline($pdf, $xCargo, $y, $y+$hToma);
+vline($pdf, $xNom,   $y, $y+$hToma);
+
+// 2 filas en blanco + header row (como se ve abajo)
+hline($pdf, $L, $y + 6.0, $R);
+hline($pdf, $L, $y + 12.0, $R);
+
+// Encabezados columnas
+cellText($pdf, $L, $y+0.9, ($xCargo-$L), 5, "Cargo", 'C', 'B', 8);
+cellText($pdf, $xCargo, $y+0.9, ($xNom-$xCargo), 5, "Nombre", 'C', 'B', 8);
+cellText($pdf, $xNom, $y+0.9, ($R-$xNom), 5, "Firma", 'C', 'B', 8);
+
+$y = $y + $hToma + 2.0;
+
+// ====== OBSERVACIONES ======
+headerBar($pdf, $L, $y, $W, 6.0, "Observaciones");
+$y += 6.0;
+
+$hObs = 10.5;
+rect($pdf, $L, $y, $W, $hObs);
+hline($pdf, $L, $y + $hObs/2, $R);
+
+cellText($pdf, $L+2, $y+0.8, 10, 4.5, "1.-", 'L', 'B', 8);
+cellText($pdf, $L+2, $y+($hObs/2)+0.8, 10, 4.5, "2.-", 'L', 'B', 8);
+
+// si quieres imprimir observaciones (resumen) dentro:
+$obs = trim((string)($row['observaciones'] ?? ''));
+if ($obs !== '') {
+  $parts = wrapLines($obs);
+  fitCellText($pdf, $L+12, $y+0.8, $W-14, 4.5, $parts[0] ?? '', 'L', '', 7, 6);
+  fitCellText($pdf, $L+12, $y+($hObs/2)+0.8, $W-14, 4.5, $parts[1] ?? '', 'L', '', 7, 6);
+}
+
+// ===== DEBUG: rejilla simple =====
+if ($debug) {
+  $pdf->SetDrawColor(255,0,0);
+  $pdf->SetLineWidth(0.2);
+  for ($gx=0; $gx<=216; $gx+=10) { $pdf->Line($gx, 0, $gx, 279); }
+  for ($gy=0; $gy<=356; $gy+=10) { $pdf->Line(0, $gy, 216, $gy); }
+  $pdf->SetDrawColor($BLUE[0], $BLUE[1], $BLUE[2]);
+  $pdf->SetLineWidth(0.35);
+}
+
+// ===== Output =====
+$nombre = 'PIV_FORMATO_' . ($row['fecha'] ? date('d-m-Y', strtotime($row['fecha'])) : 'sinf') . '_ID'.$id_piv.'.pdf';
+$pdf->Output('I', $nombre);
+exit;
+

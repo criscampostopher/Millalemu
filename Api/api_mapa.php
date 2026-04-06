@@ -3,6 +3,7 @@
 // Api/api_mapa.php 
 // ==========================================================
 require_once __DIR__ . '/../Config/db_config.php';
+require_once __DIR__ . '/../Config/roles.php';
 header('Content-Type: application/json');
 
 ini_set('display_errors', 0);
@@ -14,7 +15,7 @@ $action = $_GET['action'] ?? $_POST['action'] ?? $inputData['action'] ?? null;
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 $id_usuario_actual = $_SESSION['id_usuario'] ?? null;
-$es_admin = ($_SESSION['tipo_usuario'] ?? '') === 'admin';
+$es_admin = usuarioSesionPuedeAdministrar();
 
 try {
     switch ($action) {
@@ -40,6 +41,7 @@ try {
             //esto elimina todas las elrtas de la bd ???, que estupides $pdo->exec("DELETE FROM public.peligro WHERE fecha_creacion::date < CURRENT_DATE");
 
             $sql = "SELECT p.id, p.nombre, p.descripcion, p.tipo, p.nivel, p.id_mapa, p.radio_metros,
+                    u.nombre_usuario, u.tipo_usuario,u.id_usuario,
                     ST_AsGeoJSON(p.geom) AS geojson,
                     CASE 
                         -- Iconos OpenSource
@@ -49,6 +51,7 @@ try {
                         ELSE 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png'
                     END as icono_url
                     FROM public.peligro p
+                    LEFT JOIN public.usuario u ON p.id_usuario = u.id_usuario
                     WHERE p.estado = 'activa'";
             
             $stmt = $pdo->query($sql);
@@ -71,7 +74,7 @@ try {
                 $pdo->beginTransaction();
 
                 // --- GESTIÓN DEL MAPA GENERAL (ID 1) ---
-                $id_destino = 1; // Asumimos por defecto que es el 1
+                $id_destino = isset($inputData['id_mapa']) ? (int)$inputData['id_mapa'] : 1;
 
                 // 1. Verificamos si existe el Mapa 1 realmente
                 $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM public.mapa WHERE id_mapa = 1");
@@ -115,10 +118,14 @@ try {
 
         // 3. BORRAR ELEMENTO
         case 'delete_marker':
-            if (!$es_admin) throw new Exception("Acceso denegado");
+            //if (!$es_admin) throw new Exception("Acceso denegado");
             $id = $inputData['id'];
             $pdo->prepare("DELETE FROM public.peligro WHERE id = ?")->execute([$id]);
             echo json_encode(['success' => true]);
+            break;
+        case 'fetch_catalogo':
+            $stmt = $pdo->query("SELECT * FROM public.catalogo_alertas ORDER BY nombre ASC");
+            echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
             break;
 
         // 4. LISTAR MAPAS
@@ -168,6 +175,44 @@ try {
             echo json_encode(['success' => true]);
             break;
 
+            case 'delete_zone':
+            if (!$es_admin) throw new Exception("Acceso denegado");
+            $id_zona = isset($inputData['id_zona']) ? (int)$inputData['id_zona'] : 0;
+            
+            if ($id_zona > 0) {
+                try {
+                    // Iniciamos una transacción segura
+                    $pdo->beginTransaction();
+                    
+                    // 1. Desasignar a todos los trabajadores de este predio
+                    $stmt1 = $pdo->prepare("DELETE FROM public.usuario_zona WHERE id_zona = ?");
+                    $stmt1->execute([$id_zona]);
+                    
+                    // 2. Borrar todas las alertas (peligros) de los mapas que pertenezcan a este predio
+                    $stmt2 = $pdo->prepare("DELETE FROM public.peligro WHERE id_mapa IN (SELECT id_mapa FROM public.mapa WHERE id_zona = ?)");
+                    $stmt2->execute([$id_zona]);
+                    
+                    // 3. Borrar los mapas físicos que pertenecen a este predio
+                    $stmt3 = $pdo->prepare("DELETE FROM public.mapa WHERE id_zona = ?");
+                    $stmt3->execute([$id_zona]);
+                    
+                    // 4. Finalmente, borrar la zona/predio
+                    $stmt4 = $pdo->prepare("DELETE FROM public.zona WHERE id_zona = ?");
+                    $stmt4->execute([$id_zona]);
+                    
+                    // Si todo salió bien, guardamos los cambios
+                    $pdo->commit();
+                    
+                    echo json_encode(['success' => true]);
+                } catch (Exception $e) {
+                    // Si algo falla, deshacemos todo para evitar errores
+                    $pdo->rollBack();
+                    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                }
+            } else {
+                echo json_encode(['success' => false, 'error' => 'ID de zona inválido.']);
+            }
+            break;
         // 6. RESET TOTAL
         // 6. RESET TOTAL (ZONAS, MAPAS, ASIGNACIONES Y PELIGROS)
         // 6. RESET TOTAL (INTELIGENTE)
@@ -192,6 +237,63 @@ try {
             // (Opcional, depende de si usas SERIAL)
             
             echo json_encode(['success' => true, 'msg' => 'Sistema limpiado (Capa General conservada).']);
+            break;
+            // ==========================================================
+        // TRAZABILIDAD Y SEGURIDAD (VERSIÓN INTELIGENTE)
+        // ==========================================================
+        case 'registrar_firma_seguridad':
+            if (!$id_usuario_actual) throw new Exception("Usuario no autenticado");
+            
+            $tipo_alerta = $inputData['tipo_alerta'] ?? 'Alerta Desconocida';
+            $id_alerta = $inputData['id_alerta'] ?? 0;
+            $lat = $inputData['lat'] ?? 0;
+            $lng = $inputData['lng'] ?? 0;
+            $nombre_mapa = 'General / Sistema'; // Mapa por defecto
+            
+            // 1. TRADUCTOR DE ALERTAS MANUALES Y MAPAS
+            // Si la ID es un número, significa que es una alerta creada en la BD
+            if (is_numeric($id_alerta) && $id_alerta > 0) {
+                $check = $pdo->prepare("
+                    SELECT p.nombre as nombre_real, m.nombre_mapa 
+                    FROM public.peligro p 
+                    LEFT JOIN public.mapa m ON p.id_mapa = m.id_mapa 
+                    WHERE p.id = ?
+                ");
+                $check->execute([$id_alerta]);
+                if ($row = $check->fetch(PDO::FETCH_ASSOC)) {
+                    $tipo_alerta = $row['nombre_real']; // Ej: "Árbol Nativo"
+                    if (!empty($row['nombre_mapa'])) {
+                        $nombre_mapa = $row['nombre_mapa']; // Ej: "Predio Los Álamos"
+                    }
+                }
+            } else {
+                // Si NO es numérico, es un Polígono (Acta, Pendiente) o una alerta Offline
+                // Limpiamos los emojis o textos extraños que venían de la pantalla
+                $tipo_alerta = str_ireplace(['⚠️', 'PELIGRO:', 'ATENCIÓN:'], '', $tipo_alerta);
+                $tipo_alerta = trim($tipo_alerta);
+            }
+
+            // 2. CORRECCIÓN DE ROLES
+            $rol_usr = $_SESSION['tipo_usuario'] ?? 'operador';
+            // Si tu sistema originalmente guardaba a los operadores como "usuario", lo arreglamos:
+            if (strtolower($rol_usr) === 'usuario') { 
+                $rol_usr = 'operador'; 
+            }
+
+            $fecha_hora_celular = $inputData['fecha_hora'] ?? date('Y-m-d H:i:s');
+            $fecha_hora = date('Y-m-d H:i:s', strtotime($fecha_hora_celular));
+            $nombre_usr = $_SESSION['nombre_usuario'] ?? 'Desconocido';
+
+            // 3. GUARDAR TODO (Ahora incluyendo el nombre del mapa)
+            $sql_firma = "INSERT INTO public.registro_seguridad 
+                    (id_usuario, nombre_usuario, rol_usuario, tipo_alerta, nombre_mapa, latitud, longitud, fecha_hora) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+            
+            $pdo->prepare($sql_firma)->execute([
+                $id_usuario_actual, $nombre_usr, $rol_usr, $tipo_alerta, $nombre_mapa, $lat, $lng, $fecha_hora
+            ]);
+            
+            echo json_encode(['success' => true]);
             break;
 
         default:

@@ -1,12 +1,12 @@
 <?php
 // ==========================================================
-// Archivo: usuarios.php (Versión ZONAS)
+// Archivo: usuarios.php (Versión ZONAS + Rol Jefe de Faena)
 // ==========================================================
 session_start();
 require_once __DIR__ . '/Config/db_config.php';
+require_once __DIR__ . '/Config/roles.php';
 
-
-if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { 
+if (!usuarioSesionPuedeAdministrar()) { 
     header("Location: login.php"); 
     exit; 
 }
@@ -31,7 +31,7 @@ if (isset($input['action']) && (strpos($input['action'], 'zona') !== false || $i
             $check->execute([$input['id_usuario'], $input['id_zona']]);
             
             if($check->fetch()) { 
-                $res['error'] = "Zona ya asignada."; 
+                $res['error'] = "Predio ya asignado."; 
             } else {
                 // INSERT CON FECHAS
                 $sql = "INSERT INTO public.usuario_zona (id_usuario, id_zona, fecha_inicio, fecha_fin) VALUES (?, ?, ?, ?)";
@@ -54,15 +54,14 @@ if (isset($input['action']) && (strpos($input['action'], 'zona') !== false || $i
 }
 
 // 2. CARGA DE DATOS HTML
-if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { header("Location: login.php"); exit; }
+if (!usuarioSesionPuedeAdministrar()) { header("Location: login.php"); exit; }
 
 $usuarios = $pdo->query("SELECT id_usuario AS id, nombre_usuario, email, tipo_usuario FROM public.usuario ORDER BY id_usuario ASC")->fetchAll(PDO::FETCH_ASSOC);
 // CAMBIO: Cargamos ZONAS en vez de Mapas
-$zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona ORDER BY nombre_zona ASC")->fetchAll(PDO::FETCH_ASSOC);
+$zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona WHERE nombre_zona != 'SISTEMA_OCULTO' ORDER BY nombre_zona ASC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="es">
-
 
 <head>
     <meta charset="UTF-8">
@@ -167,13 +166,16 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
     <div class="leaves-container"><div class="leaf"></div></div>
     
     <aside class="sidebar">
-        <h2 style="text-align:center;color:#fdd835;">Millalemu</h2>
+        <h2 style="text-align:center; padding:10px; color:#fdd835;">Millalemu</h2>
         <a href="menuadmin.php"><i class="fas fa-home"></i> Inicio</a>
         <a href="index.php"><i class="fas fa-eye"></i> <b>Visor Global</b></a>
-        <a href="mapas.php"><i class="fas fa-layer-group"></i> Gestión de Mapas</a>
-        <a href="usuarios.php" class="active"><i class="fas fa-users"></i> Usuario</a>
-        
-        <a href="logout.php" style="margin-top:auto; color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Salir</a>
+        <a href="mapas.php" class="active"><i class="fas fa-layer-group"></i> Gestión de Mapas</a>
+        <a href="usuarios.php"><i class="fas fa-users"></i> Usuarios</a>
+        <a href="auditoria.php"><i class="fas fa-shield-alt"></i> Auditoría de Seguridad</a>
+        <a href="piv_formulario.php" class="piv-btn"><i class="fas fa-clipboard-list"></i> PIV Formulario</a>
+        <div style="margin-top:auto; padding-bottom:20px;">
+            <a href="logout.php" style="color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Salir</a>
+        </div>
     </aside>
 
     <main class="main">
@@ -187,16 +189,35 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
                 <thead><tr><th>ID</th><th>Usuario</th><th>Email</th><th>Rol</th><th>Acciones</th></tr></thead>
                 <tbody>
                     <?php foreach($usuarios as $u): ?>
+                    <?php
+                    $nombreUsuarioActual = trim((string)($u['nombre_usuario'] ?? ''));
+                    if (function_exists('mb_strtolower')) {
+                        $es_emiliano_protegido = mb_strtolower($nombreUsuarioActual, 'UTF-8') === 'emiliano machuca';
+                    } else {
+                        $es_emiliano_protegido = strtolower($nombreUsuarioActual) === 'emiliano machuca';
+                    }
+                    ?>
                     <tr>
                         <td><?= $u['id'] ?></td>
                         <td><?= htmlspecialchars($u['nombre_usuario']) ?></td>
                         <td><?= htmlspecialchars($u['email'] ?? '-') ?></td>
-                        <td><?= strtoupper($u['tipo_usuario']) ?></td>
+                        <td>
+                            <?php 
+                            $roles_display = [
+                                'admin' => 'ADMINISTRADOR',
+                                'ingeniero_forestal' => 'INGENIERO FORESTAL',
+                                'jefe_operaciones' => 'JEFE DE OPERACIONES',
+                                'jefe_faena' => 'JEFE DE FAENA',
+                                'usuario' => 'OPERADOR / TRABAJADOR'
+                            ];
+                            echo $roles_display[$u['tipo_usuario']] ?? strtoupper($u['tipo_usuario']);
+                            ?>
+                        </td>
                         <td>
                             <?php if($u['id'] != 1): ?>
-                            <button class="btn-action btn-assign" onclick="gestionarZonas(<?= $u['id'] ?>, '<?= $u['nombre_usuario'] ?>')" title="Asignar Zonas"><i class="fas fa-map-marked-alt"></i></button>
-                            <button class="btn-action btn-edit" onclick="editar(<?= $u['id'] ?>, '<?= $u['nombre_usuario'] ?>', '<?= $u['email'] ?>', '<?= $u['tipo_usuario'] ?>')" title="Editar Usuario"><i class="fas fa-edit"></i></button>
-                            <?php if($u['id'] != $_SESSION['id_usuario']): ?>
+                            <button class="btn-action btn-assign" onclick="gestionarZonas(<?= $u['id'] ?>, '<?= htmlspecialchars($u['nombre_usuario']) ?>')" title="Asignar Predio"><i class="fas fa-map-marked-alt"></i></button>
+                            <button class="btn-action btn-edit" onclick="editar(<?= $u['id'] ?>, '<?= htmlspecialchars($u['nombre_usuario']) ?>', '<?= htmlspecialchars($u['email']) ?>', '<?= $u['tipo_usuario'] ?>')" title="Editar Usuario"><i class="fas fa-edit"></i></button>
+                            <?php if($u['id'] != $_SESSION['id_usuario'] && !$es_emiliano_protegido): ?>
                                 <button class="btn-action btn-del" onclick="eliminar(<?= $u['id'] ?>)" title="Eliminar"><i class="fas fa-trash"></i></button>
                             <?php endif; ?>
                             <?php endif; ?>
@@ -230,8 +251,11 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
                 <div class="form-group">
                     <label>Rol:</label>
                     <select id="userRol">
-                        <option value="usuario">Trabajador</option>
-                        <option value="admin">Supervisor/jefe</option>
+                        <option value="usuario">Operador / Trabajador</option>
+                        <option value="jefe_faena">Jefe de Faena</option>
+                        <option value="jefe_operaciones">Jefe de Operaciones</option>
+                        <option value="ingeniero_forestal">Ingeniero Forestal</option>
+                        <option value="admin">Administrador del Sistema</option>
                     </select>
                 </div>
                 
@@ -243,15 +267,15 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
     <div id="assignModal" class="modal">
     <div class="modal-content">
         <span class="close-btn" onclick="cerrarModal('assignModal')">&times;</span>
-        <h2 style="color:#f1c40f;">Asignar Zonas</h2>
+        <h2 style="color:#f1c40f;">Asignar Predio</h2>
         <p>Usuario: <b id="assignUserName"></b></p>
         
         <form id="assignForm" style="background:#fffbe6; padding:15px; border-radius:5px; margin-bottom:15px;">
             <input type="hidden" id="assignUserId">
-            <<div class="form-group">
-                <label>Seleccionar Zona:</label>
+            <div class="form-group">
+                <label>Seleccionar Predio:</label>
                 <select id="assignZoneId" required style="width:100%;">
-                    <option value="">-- Selecciona Zona --</option>
+                    <option value="">-- Seleccionar Predio --</option>
                     <?php foreach($zonas_disponibles as $z): ?>
                         <option value="<?= $z['id_zona'] ?>"><?= $z['nombre_zona'] ?></option>
                     <?php endforeach; ?>
@@ -271,7 +295,7 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
             <button type="submit" class="btn-new" style="width:100%; background:#f1c40f; color:#333;">Asignar</button>
         </form>
 
-        <h4 style="margin-bottom:5px;">Zonas Asignadas:</h4>
+        <h4 style="margin-bottom:5px;">Predios Asignados:</h4>
         <div id="contenedorZonasUsuario" class="scroll-container">
             <small>Cargando...</small>
         </div>
@@ -282,8 +306,7 @@ $zonas_disponibles = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona O
         let isEditingUser = false;
         function cerrarModal(id) { document.getElementById(id).style.display = 'none'; }
         
-        // --- USUARIOS ---
-       // --- FUNCIONES DE USUARIOS ---
+        // --- FUNCIONES DE USUARIOS ---
 
 function abrirModal() { 
     isEditingUser = false; 
@@ -292,6 +315,7 @@ function abrirModal() {
     document.getElementById('userName').value = ''; 
     document.getElementById('userEmail').value = ''; 
     document.getElementById('userPass').value = ''; 
+    document.getElementById('userRol').value = 'usuario'; 
     document.getElementById('userModal').style.display = 'block'; 
 }
 
@@ -302,11 +326,10 @@ function editar(id, nombre, email, rol) {
     document.getElementById('userName').value = nombre; 
     document.getElementById('userEmail').value = (email && email !== 'null') ? email : '';
     document.getElementById('userRol').value = rol; 
-    document.getElementById('userPass').value = ''; // La clave se deja vacía si no se va a cambiar
+    document.getElementById('userPass').value = ''; 
     document.getElementById('userModal').style.display = 'block'; 
 }
 
-// CAMBIO CRÍTICO: Hacer la función async para esperar la respuesta
 document.getElementById('userForm').onsubmit = async (e) => { 
     e.preventDefault(); 
     
@@ -320,15 +343,13 @@ document.getElementById('userForm').onsubmit = async (e) => {
         rol: document.getElementById('userRol').value 
     };
 
-    // Esperamos la respuesta de la API
     const res = await enviarAPI(action, data); 
 
     if (res.success) {
         alert(isEditingUser ? "✅ Usuario actualizado con éxito" : "✅ Usuario creado con éxito");
-        cerrarModal(); // Asegúrate de tener esta función para ocultar el modal
-        location.reload(); // Recargamos para ver los cambios en la tabla
+        cerrarModal('userModal'); 
+        location.reload(); 
     } else {
-        // Aquí es donde aparecerá "Usuario o Email ya existe" o cualquier error del PHP
         alert("⚠️ Error: " + (res.error || "No se pudo procesar la solicitud"));
     }
 };
@@ -345,9 +366,6 @@ async function eliminar(id) {
     } 
 }
 
-function cerrarModal() {
-    document.getElementById('userModal').style.display = 'none';
-}
         // --- MAPAS ---
        function gestionarZonas(idUser, nombreUser) { 
         document.getElementById('assignUserId').value = idUser; 
@@ -377,7 +395,7 @@ function cerrarModal() {
                         </div>`;
                 });
             } else {
-                div.innerHTML = '<small style="display:block;padding:10px;color:#777;">Sin zonas asignadas.</small>';
+                div.innerHTML = '<small style="display:block;padding:10px;color:#777;">Sin predios asignados.</small>';
             }
         });
     }
@@ -388,19 +406,18 @@ function cerrarModal() {
             action: 'assign_zona',
             id_usuario: document.getElementById('assignUserId').value,
             id_zona: document.getElementById('assignZoneId').value,
-            // AGREGAMOS ESTO:
             inicio: document.getElementById('assignStart').value,
             fin: document.getElementById('assignEnd').value
         };
         fetch('usuarios.php', { method:'POST', body:JSON.stringify(data) })
         .then(r=>r.json()).then(res => {
-            if(res.success) { alert("✅ Zona asignada"); cargarZonasUsuario(data.id_usuario); } 
+            if(res.success) { alert("✅ Predio asignado"); cargarZonasUsuario(data.id_usuario); } 
             else alert('⚠️ ' + res.error);
         });
     };
 
     function quitarZona(idUser, idAsignacion) {
-        if(confirm("¿Quitar zona?")) {
+        if(confirm("¿Quitar Predio?")) {
             fetch('usuarios.php', { method:'POST', body:JSON.stringify({action:'delete_zona', id_asignacion: idAsignacion}) })
             .then(r=>r.json()).then(res => {
                 if(res.success) cargarZonasUsuario(idUser);
@@ -414,25 +431,17 @@ function cerrarModal() {
         if(e.target.className === 'modal') e.target.style.display='none'; 
     }
 
-
-
-
-    
     // Función auxiliar para enviar datos a la API
 async function enviarAPI(action, data = {}) {
-    // Si el primer parámetro es un objeto, reasignamos los valores
     if (typeof action === 'object') {
         data = action;
         action = data.action || '';
     }
 
-    // Definimos a qué archivo apuntar según la acción
-    // Si la acción trata sobre zonas, apunta al mismo archivo, si no a la API
     const url = (action.includes('zona') || action.includes('get_user_zonas')) 
                 ? 'usuarios.php' 
                 : 'Api/api_usuarios.php';
     
-    // Aseguramos que la acción esté dentro del objeto de datos
     data.action = action;
 
     try {

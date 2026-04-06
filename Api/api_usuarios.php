@@ -3,13 +3,14 @@
 // Api/api_usuarios.php 
 // ==========================================================
 require_once __DIR__ . '/../Config/db_config.php';
+require_once __DIR__ . '/../Config/roles.php';
 header('Content-Type: application/json');
 
 ini_set('display_errors', 0);
 error_reporting(E_ALL);
 
 session_start();
-if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') {
+if (!usuarioSesionPuedeAdministrar()) {
     http_response_code(403);
     echo json_encode(['success' => false, 'error' => 'No autorizado']);
     exit;
@@ -34,7 +35,10 @@ try {
             $user = trim($data['user'] ?? '');
             $email = trim($data['email'] ?? ''); 
             $pass = trim($data['pass'] ?? '');
-            $rol  = $data['rol'] ?? 'usuario';
+            
+            // VALIDACIÓN ESTRICTA DE LOS 3 ROLES PERMITIDOS
+            $rol_recibido = $data['rol'] ?? 'usuario';
+            $rol = in_array($rol_recibido, ['admin', 'ingeniero_forestal', 'jefe_operaciones', 'jefe_faena', 'usuario'], true) ? $rol_recibido : 'usuario';
 
             if (empty($user) || empty($pass)) throw new Exception("Faltan datos obligatorios");
 
@@ -47,9 +51,6 @@ try {
             $sql = "INSERT INTO public.usuario (nombre_usuario, email, contrasena_hash, tipo_usuario) VALUES (?, ?, ?, ?)";
             $pdo->prepare($sql)->execute([$user, empty($email) ? null : $email, $hash, $rol]);
             
-
-            
-
             echo json_encode(['success' => true]);
             break;
 
@@ -61,7 +62,10 @@ try {
             $user = trim($data['user']);
             $email = trim($data['email'] ?? ''); 
             $pass = trim($data['pass'] ?? '');
-            $rol  = $data['rol'];
+            
+            // VALIDACIÓN ESTRICTA DE LOS 3 ROLES PERMITIDOS
+            $rol_recibido = $data['rol'] ?? 'usuario';
+            $rol = in_array($rol_recibido, ['admin', 'ingeniero_forestal', 'jefe_operaciones', 'jefe_faena', 'usuario'], true) ? $rol_recibido : 'usuario';
 
             $sqlBase = "UPDATE public.usuario SET nombre_usuario=?, email=?, tipo_usuario=?";
             $params = [$user, empty($email) ? null : $email, $rol];
@@ -78,6 +82,7 @@ try {
             echo json_encode(['success' => true]);
             break;
 
+        // --- ELIMINAR USUARIO ---
         case 'delete':
             $id = $data['id'];
             if ($id == 1 || $id == $_SESSION['id_usuario']) throw new Exception("No puedes borrarte a ti mismo ni al admin principal");
@@ -85,7 +90,8 @@ try {
             echo json_encode(['success' => true]);
             break;
 
-        case 'get_user_maps': // Ahora trae las Zonas asignadas
+        // --- MAPAS / ZONAS ---
+        case 'get_user_maps': 
             $id_usuario = $data['id_usuario'];
             $sql = "SELECT uz.id_zona, z.nombre_zona 
                     FROM public.usuario_zona uz
@@ -98,7 +104,7 @@ try {
 
         case 'assign_map':
             $id_usuario = $data['id_usuario'];
-            $id_zona    = $data['id_zona']; // Cambiado de id_mapa a id_zona
+            $id_zona    = $data['id_zona']; 
             $inicio     = $data['inicio'] ?: date('Y-m-d H:i:s');
 
             $sql = "INSERT INTO public.usuario_zona (id_usuario, id_zona, fecha_inicio) VALUES (?, ?, ?)";
@@ -106,7 +112,6 @@ try {
             echo json_encode(['success' => true]);
             break;
 
-        // --- MODIFICAR FECHAS DE ASIGNACIÓN ---
         case 'update_map_assignment':
             $id_usuario = $data['id_usuario'];
             $id_mapa    = $data['id_zona'];
@@ -117,7 +122,7 @@ try {
 
             $sql = "UPDATE public.usuario_zona SET fecha_inicio = ?, fecha_fin = ? WHERE id_usuario = ? AND id_zona = ?";
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([$inicio, $fin, $id_usuario, $id_zona]);
+            $stmt->execute([$inicio, $fin, $id_usuario, $id_mapa]);
             
             echo json_encode(['success' => true]);
             break;

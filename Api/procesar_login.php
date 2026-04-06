@@ -4,6 +4,7 @@
 // ==========================================================
 session_start();
 require_once __DIR__ . '/../Config/db_config.php';
+require_once __DIR__ . '/../Config/roles.php';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
@@ -33,7 +34,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $_SESSION['tipo_usuario'] = $usuario['tipo_usuario'];
 
             // --- REDIRECCIÓN INTELIGENTE ---
-            if ($usuario['tipo_usuario'] === 'admin') {
+            if (rolTieneFuncionesAdmin($usuario['tipo_usuario'])) {
             
                 header("Location: ../menuadmin.php");
             } else {

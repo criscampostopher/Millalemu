@@ -6,8 +6,9 @@ session_start();
 header("Cache-Control: no-cache, no-store, must-revalidate");
 header("Pragma: no-cache");
 header("Expires: 0");
+require_once __DIR__ . '/Config/roles.php';
 
-if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { 
+if (!usuarioSesionPuedeAdministrar()) { 
     header("Location: login.php"); 
     exit; 
 }
@@ -52,6 +53,8 @@ if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') {
         <a href="index.php"><i class="fas fa-eye"></i> <b>Visor Global</b></a>
         <a href="mapas.php" class="active"><i class="fas fa-layer-group"></i> Gestión de Mapas</a>
         <a href="usuarios.php"><i class="fas fa-users"></i> Usuarios</a>
+        <a href="auditoria.php"><i class="fas fa-shield-alt"></i> Auditoría de Seguridad</a>
+        <a href="piv_formulario.php" class="piv-btn"><i class="fas fa-clipboard-list"></i> PIV Formulario</a>
         <div style="margin-top:auto; padding-bottom:20px;">
             <a href="logout.php" style="color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Salir</a>
         </div>
@@ -63,7 +66,7 @@ if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') {
         </div>
 
         <div id="view-zones">
-            <h3 style="color:#2ecc71; -webkit-text-stroke: 0.5px white;">Selecciona una Zona para ver sus mapas:</h3>
+            <h3 style="color:#2ecc71; -webkit-text-stroke: 0.5px white;">Selecciona un Predio para ver sus mapas:</h3>
             <div class="zones-grid" id="zones-container">
                 <p>Cargando zonas...</p>
             </div>
@@ -72,14 +75,14 @@ if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') {
                 <div class="zone-card" onclick="cargarMapas(null, 'Mapas Generales / Sin Zona')" style="max-width: 200px; background: #fdfdfd;">
                     <div class="zone-icon" style="color:#2ecc71;"><i class="fas fa-globe"></i></div>
                     <div class="zone-title">General / Otros</div>
-                    <div class="zone-info">Mapas sin zona asignada</div>
+                    <div class="zone-info">Mapas sin predio asignado</div>
                 </div>
             </div>
         </div>
 
         <div id="view-maps" style="display:none;">
-            <button onclick="volverAZonas()" class="btn btn-back"><i class="fas fa-arrow-left"></i> Volver a Zonas</button>
-            <h2 id="zona-actual-titulo" style="color:#2ecc71; margin-bottom:15px; -webkit-text-stroke: 0.5px white; ">Mapas de la Zona</h2>
+            <button onclick="volverAZonas()" class="btn btn-back"><i class="fas fa-arrow-left"></i> Volver a Predios</button>
+            <h2 id="zona-actual-titulo" style="color:#2ecc71; margin-bottom:15px; -webkit-text-stroke: 0.5px white; ">Mapas del Predio</h2>
 
             <div class="table-container">
                 <table id="tabla-mapas">
@@ -109,9 +112,13 @@ if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') {
                 const container = document.getElementById('zones-container');
                 container.innerHTML = '';
                 if(res.success && res.zones && res.zones.length > 0) {
-                    res.zones.forEach(z => {
+                   res.zones.forEach(z => {
                         container.innerHTML += `
-                            <div class="zone-card" onclick="cargarMapas(${z.id_zona}, '${z.nombre_zona}')">
+                            <div class="zone-card" style="position:relative;" onclick="cargarMapas(${z.id_zona}, '${z.nombre_zona}')">
+                                <button onclick="delZona(${z.id_zona}, '${z.nombre_zona}', event)" style="position:absolute; top:10px; right:10px; background:#e74c3c; color:white; border:none; border-radius:4px; padding:5px 8px; cursor:pointer;" title="Eliminar Predio Completo">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                                
                                 <div class="zone-icon"><i class="fas fa-map-marked-alt"></i></div>
                                 <div class="zone-title">${z.nombre_zona}</div>
                                 <div class="zone-info">${z.cantidad_mapas} Mapas</div>
@@ -168,6 +175,38 @@ if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') {
         function volverAZonas() {
             document.getElementById('view-maps').style.display = 'none';
             document.getElementById('view-zones').style.display = 'block';
+        }
+        
+        
+        
+        
+        
+        // FUNCIÓN: Borrar un predio completo
+        function delZona(idZona, nombreZona, event) {
+            // Esto evita que al hacer clic en el basurero se abra la carpeta de mapas
+            event.stopPropagation(); 
+            
+            // Advertencia severa
+            if(confirm(`⚠️ ¡CUIDADO! ¿Estás absolutamente seguro de eliminar el predio "${nombreZona}"?\n\nEsto borrará para siempre:\n- La zona/predio.\n- Todos los mapas asociados a este predio.\n- Todas las alertas y peligros dibujados en esos mapas.\n- Las asignaciones de los trabajadores a esta zona.`)) {
+                
+                fetch('Api/api_mapa.php', {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'delete_zone', id_zona: idZona })
+                })
+                .then(r => r.json())
+                .then(res => {
+                    if(res.success) {
+                        alert("✅ Predio eliminado completamente de la base de datos.");
+                        location.reload();
+                    } else {
+                        alert("❌ Error: " + (res.error || "No se pudo eliminar el predio."));
+                    }
+                })
+                .catch(e => {
+                    console.error(e);
+                    alert("Error de red al intentar borrar el predio.");
+                });
+            }
         }
 
         function del(id) {

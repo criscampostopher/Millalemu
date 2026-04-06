@@ -1,7 +1,8 @@
 <?php
 session_start();
+require_once __DIR__ . '/Config/roles.php';
 if (isset($_SESSION['id_usuario'])) {
-    if ($_SESSION['tipo_usuario'] === 'admin') {
+    if (rolTieneFuncionesAdmin($_SESSION['tipo_usuario'] ?? '')) {
         header("Location: menuadmin.php");
     } else {
         header("Location: index.php");
@@ -45,10 +46,6 @@ if (isset($_SESSION['id_usuario'])) {
            
             <div class="input-group">
     <input type="password" name="password" class="form-control" placeholder="Contraseña" required>
-</div>
-
-<div style="text-align: right; margin-bottom: 15px;">
-    <a href="recuperarContra.php" style="color: #388e3c; font-size: 0.9rem; text-decoration: none;">¿Olvidaste tu contraseña?</a>
 </div>
             
             <button type="submit" class="btn-forest">Iniciar Sesión</button>

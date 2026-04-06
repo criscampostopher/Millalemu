@@ -1,0 +1,42 @@
+/* Modal de creación de alerta */
+.alert-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%,-50%);
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  z-index: 2000;
+  padding: 16px;
+  width: 320px;
+  max-width: calc(100% - 32px);
+  font-family: Arial, sans-serif;
+}
+.alert-modal h3 { margin-top: 0; }
+.alert-modal input[type="text"], .alert-modal textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 6px;
+}
+.alert-modal .actions { text-align: right; margin-top: 8px; }
+.alert-modal .actions button { margin-left: 6px; }
+
+/* Overlay */
+.alert-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 1999;
+}
+.selected-marker {
+  outline: 3px solid #2b8aef;
+  border-radius: 50%;
+}
+.selected-marker {
+  box-shadow: 0 0 0 4px rgba(43,138,239,0.35);
+  transform: scale(1.05);
+}
+/* Panel pequeño en mobile */
+#panel { max-width: 360px; }
