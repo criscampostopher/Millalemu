@@ -718,13 +718,16 @@ function agregarCapaAlMapa(layer, id) {
     if (typeof actualizarAlertasVisibles === 'function') actualizarAlertasVisibles();
 }
 
-// --- 4. GESTIÓN DE ALERTAS (BD) ---
+
 // --- 4. GESTIÓN DE ALERTAS (BD) ---
 function cargarDatosDeAlertas() {
     if (layerManuales) layerManuales.clearLayers();
     if (layerPendientes) layerPendientes.clearLayers();
     
-    fetch('Api/api_mapa.php?action=fetch_markers').then(r => r.json()).then(res => {
+    // Usamos el reloj para traer datos frescos sin usar Headers que bloqueen el servidor
+    const urlSegura = 'Api/api_mapa.php?action=fetch_markers&nocache=' + Date.now();
+    
+    fetch(urlSegura).then(r => r.json()).then(res => {
         if (res.success && res.markers) {
             marcadoresPeligro = []; 
             const isAdmin = res.is_admin;
@@ -743,7 +746,7 @@ function cargarDatosDeAlertas() {
                         asignarDatosComunes(m, props, isAdmin);
                         marcadoresPeligro.push(m);
                     } 
-                    else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+                    else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon' || geom.type === 'GeometryCollection') {
                         // Estilo para depuración (luego lo puedes poner invisible opacity:0)
                         const m = L.geoJSON(geom, { style: { color: '#FF5722', weight: 5, fillOpacity: 0.2, dashArray: '10, 10' } });
                         
@@ -827,10 +830,10 @@ function actualizarAlertasVisibles() {
         // Verificamos si la capa asociada está activa en el menú
         if (capasActivas[idMapa] || idMapa == 1) {
             
-            // A) CASO PENDIENTES
-            if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) {
+            // A) CASO PENDIENTES (Aseguramos que solo sean los polígonos automáticos)
+            if (m.tipo_geom === 'Polygon' && m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) {
                 layerPendientes.addLayer(m);
-            } 
+            }
             // B) CASO ALERTAS MANUALES / NATIVO / AGUA
             else {
                 // 1. Agregamos el PIN (Marcador)
@@ -915,7 +918,8 @@ function checkPeligros(lat, lng) {
     let peligroDetectado = false;
 
     for (let m of marcadoresPeligro) {
-        if (m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) continue;
+        // Ignorar SOLO si es un polígono de pendiente automático
+        if (m.tipo_geom === 'Polygon' && m.nombre_alerta && m.nombre_alerta.toUpperCase().includes("PENDIENTE")) continue;
 
         let isDanger = false;
         if (m.tipo_geom === 'Point') {
@@ -937,13 +941,13 @@ function checkPeligros(lat, lng) {
             let color = "#f1c40f"; 
             let nivel = 1;         
 
-            if (nombre.includes("NATIVO") || nombre.includes("VEGETACION")) {
-                titulo = "ZONA PROTEGIDA"; color = "#2ecc71"; 
+            if (nombre.includes("Zona de Protección(Buffer)") ) {
+                titulo = "ZONA DE PROTECCIÓN"; color = "#2ecc71"; 
             } else if (nombre.includes("ACTA") || nombre.includes("FAENA")) {
-                titulo = "LÍMITE DE ACTA"; color = "#e67e22"; nivel = 2; 
-            } else if (nombre.includes("AGUA")) {
-                titulo = "PROTECCIÓN AGUA"; color = "#3498db"; 
-            }
+                titulo = "LÍMITE DE ACTA"; color = "#e67e22"; nivel = 2; }
+            //} else if (nombre.includes("Zona de Protección(Buffer)")) {
+              //  titulo = "ZONA DE PROTECCIÓN"; color = "#3498db"; 
+            //}
 
             mostrarAlertaMaestra(titulo, `Estás en: ${m.nombre_alerta}`, color, nivel, (m.id_db || m.id));
             break; 
@@ -1273,15 +1277,24 @@ function setupUIEvents() {
 // --- FUNCIÓN DE DESCARGA OFFLINE "FULL PACK" ---
 window.descargarZona = function(idZona) {
     const urls = [];
+    let mapaActaOffline = null; // <-- NUEVO: Variable para rescatar el acta
 
     // 1. RECOLECTAR MAPAS DE LA ZONA (GeoJSON, KML)
     if (typeof LISTA_MAPAS !== 'undefined') {
         LISTA_MAPAS.forEach(m => { 
-            // Guardamos el mapa si es de esta zona y tiene ruta válida
             if (m.id_zona == idZona && m.ruta_archivo && m.ruta_archivo !== 'manual') {
                 urls.push(m.ruta_archivo);
             }
+            // <-- NUEVO: Identificamos el acta de esta zona y la preparamos
+            if (m.id_zona == idZona && m.categoria && m.categoria.toLowerCase().includes('acta')) {
+                mapaActaOffline = { id: m.id_mapa, nombre: m.nombre_mapa };
+            }
         });
+    }
+
+    // <-- NUEVO: Guardamos el contexto seguro en el teléfono para cuando no haya señal
+    if (mapaActaOffline) {
+        localStorage.setItem('contexto_offline_acta', JSON.stringify(mapaActaOffline));
     }
 
     // 2. RECURSOS VITALES (APP SHELL)
@@ -1307,7 +1320,6 @@ window.descargarZona = function(idZona) {
     urls.push(...recursosSistema);
 
     // 3. LA BASE DE DATOS DE ALERTAS (SNAPSHOT)
-    // Esto es lo más importante: Guardamos la respuesta de la API
     urls.push('Api/api_mapa.php?action=fetch_markers');
 
     if (urls.length > 0) {
@@ -1457,8 +1469,7 @@ function mostrarAlertaMaestra(titulo, mensaje, color, nivel, idUnico) {
 // FUNCIONES DE AUDITORÍA Y SEGURIDAD LEGAL (CORREGIDO AL 100%)
 // ============================================================================
 
-function registrarFirmaSeguridad(idAlerta, tituloAlerta) {
-    // Si estamos probando en PC y no hay GPS, usamos 0,0
+function registrarFirmaSeguridad(idAlerta, tituloAlerta, nombreMapaReal) {
     let lat = ultimaPosicion ? ultimaPosicion[0] : 0;
     let lng = ultimaPosicion ? ultimaPosicion[1] : 0;
 
@@ -1466,6 +1477,7 @@ function registrarFirmaSeguridad(idAlerta, tituloAlerta) {
         action: 'registrar_firma_seguridad',
         id_alerta: idAlerta,
         tipo_alerta: tituloAlerta,
+        nombre_mapa: nombreMapaReal || 'General / Sistema', // <-- ¡AQUÍ INCLUIMOS EL MAPA!
         lat: lat,
         lng: lng,
         fecha_hora: new Date().toISOString()
@@ -1505,24 +1517,49 @@ function cerrarAlertaMaestra() {
     let overlay = document.getElementById('alerta-maestra-overlay');
     if (overlay) overlay.style.display = 'none';
     
-    // Tu función original de sonido
     try { stopAlarmaSintetica(); } catch(e) {}
     
     // --- LÓGICA DE SILENCIADO Y GUARDADO ---
     if (idAlertaEnPantalla) {
         
-        // 1. NUEVO: Tomamos la "foto" legal antes de silenciar
         let tituloElem = document.getElementById('alerta-maestra-titulo');
         let tituloVisto = tituloElem ? tituloElem.innerText : 'Alerta de Seguridad';
-        registrarFirmaSeguridad(idAlertaEnPantalla, tituloVisto);
+        let nombreMapaReal = 'General / Sistema';
         
-        // 2. TU LÓGICA ORIGINAL: Agregamos el ID actual a la lista de silenciados
+        // Buscamos el marcador en la memoria temporal
+        let markerObj = marcadoresPeligro.find(m => (m.id_db || m.id) === idAlertaEnPantalla);
+        
+        if (markerObj) {
+            // Extraemos el nombre real de la alerta
+            if (markerObj.nombre_alerta) tituloVisto = markerObj.nombre_alerta;
+            
+            // INTENTO 1: Buscar de forma normal (si hay internet o si sincronizó bien)
+            if (typeof LISTA_MAPAS !== 'undefined' && markerObj.id_mapa_asociado && markerObj.id_mapa_asociado > 1) {
+                let mapaRef = LISTA_MAPAS.find(x => x.id_mapa == markerObj.id_mapa_asociado);
+                if (mapaRef) nombreMapaReal = mapaRef.nombre_mapa;
+            } 
+        }
+        
+        // INTENTO 2 (BLINDAJE EXTREMO): 
+        // Si falló el Intento 1 (porque la alerta se creó offline y está huérfana de mapa),
+        // forzamos la lectura de la memoria de rescate, sin importar si cree estar online o no.
+        if (nombreMapaReal === 'General / Sistema') {
+            try {
+                let contextoOffline = JSON.parse(localStorage.getItem('contexto_offline_acta'));
+                if (contextoOffline && contextoOffline.nombre) {
+                    nombreMapaReal = contextoOffline.nombre + " (Alerta Local)";
+                }
+            } catch(e) { console.error("Error leyendo contexto offline"); }
+        }
+        
+        // ¡Ahora sí enviamos los 3 datos juntos, listos para la auditoría!
+        registrarFirmaSeguridad(idAlertaEnPantalla, tituloVisto, nombreMapaReal);
+        
         if (!idsSilenciados.includes(idAlertaEnPantalla)) {
             idsSilenciados.push(idAlertaEnPantalla);
         }
     }
     
-    // 3. TU LÓGICA ORIGINAL: Reiniciar estados
     estadoAlertaActual = 0; 
     idAlertaEnPantalla = null;
 }

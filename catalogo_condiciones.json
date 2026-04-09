@@ -1,30 +1,34 @@
 [
     {
-        "titulo": "Bosque Quemado",
-        "medida": "Evitar transitar de innecesariamente al interior del bosque. Si requiere planificar volteo, realizar mapeo visual de las condiciones de los árboles para evitar evento no deseado."
+        "titulo": "Bosque Quemado.",
+        "medida": "Evitar transitar innecesariamente al interior del bosque. Si requiere planificar volteo, realizar mapeo visual de las condiciones de los árboles para evitar evento no deseado. En caso de tener que descender del equipo hacerlo en algun lugar despejado."
     },
     {
         "titulo": "Pendiente mayor al 70%; Pendiente Lateral",
-        "medida": "Realizar la revisión del sector antes de intervenir, mantener identificadas las zonas en los planos, mantener PIV. Operador debe mantener en todo momento los planos disponibles en la tablet georreferenciados en tiempo real. Prioridad a utilizar el plano de pendientes. Si el plano de pendiente indica sectores con pendientes superiores al estándar, evaluar la utilización de maquina asistida"
+        "medida": "Realizar la revisión del sector antes de intervenir, mantener identificadas las zonas en los planos, mantener PIV. Operador debe mantener en todo momento los planos disponibles en la tablet georreferenciados en tiempo real. Prioridad a utilizar el plano de pendientes. Considerar el uso de pivotes. Asistirse de acuerdo a la matriz de asistencia según el equipo que este utilizando."
     },
     {
-        "titulo": "Hornillas; Columnas de humo activas post incendio forestal",
-        "medida": "Evitar transitar al interior del bosque innecesariamente. Planificar el sector que se requiere revisar mapeando su entorno. Paso firme al caminar por el predio. Al encontrar una hornilla identificar con cinta de peligro y dar a conocer a los demás integrantes del equipo. Si se detecta columna de humo, realizar liquidación con recursos disponibles. Si se activara foco post incendio, activar plan de emergencia y protocolo de incendio forestal."
+        "titulo": "Hornillas",
+        "medida": "Evitar transitar al interior del bosque innecesariamente. Planificar el sector que se requiere revisar mapeando su entorno. Paso firme al caminar por el sector. Al encontrar una hornilla identificar con cinta de peligro y dar a conocer a los demás integrantes del equipo."
+    },
+    {
+        "titulo": "Columnas de humo activas post incendio forestal.",
+        "medida": "Si se detecta columna de humo, realizar liquidación con recursos disponibles. Si se activara foco post incendio, activar plan de emergencia y protocolo de incendio forestal."
     },
     {
         "titulo": "Presencia de faenas vecinas",
         "medida": "Mantener comunicación con faena vecina, acordando códigos de comunicación, cortes de camino u otra información que sea importante mantener."
     },
     {
-        "titulo": "Arboles desraizados y quebrados; Daño por viento, árboles tensionados al interior del bosque y en camino interior",
+        "titulo": "Arboles desraizados y quebrados; Daño por viento, árboles tensionados al interior del bosque y en camino interior.",
         "medida": "Siempre planificar los sectores a intervenir evitando transitar la menor cantidad posible bajo arboles con condiciones de riesgo. No realizar cambios de cadenas cercanos al bosque en pie. Conductores no deben estacionarse bajo arboles que presenten esta condición. Si existe mantenimiento a las maquinarias, mecánico debe seleccionar área despejada y alejada del riesgo de caída."
     },
     {
         "titulo": "Presencia de piedras (Moderada) - Roce con piedras y probabilidad de reactivación amago de incendio",
-        "medida": "Predio siniestrado por incendio forestal. Al existir esta condición puede generar chispas y activar reactivar foco. Recorrer el escenario antes de comenzar los trabajos procediendo a identificar a(s)zona(s)con presencia de rocas y\/o piedras, tratando de evitar aproximarse a estos sectores cuando la roca exceda un tamaño el cual presente un peligro al transitar por encima de estas lo que podría Provocar un incendio o reactivación de este mismo. También deben estar demarcadas en plano georreferenciado(rocas) y mencionadas en la PIV.(priorizar revisión a medida que se ingrese a los sectores identificando la mejor manera de abordar la cosecha, teniendo en cuenta la seguridad del operador. Operadores deben asegurar periodicamente los recursos de faenas autoprotegidas para atender un amago de incendio efectivamente."
+        "medida": "Predio siniestrado por incendio forestal. Al existir esta condición puede generar chispas y activar reactivar foco. Recorrer el escenario antes de comenzar los trabajos procediendo a identificar la(s)zona(s)con presencia de rocas y\/o piedras, tratando de evitar aproximarse a estos sectores cuando la roca exceda un tamaño el cual presente un peligro al transitar por encima de estas lo que podría Provocar un incendio o reactivación de este mismo. También deben estar demarcadas en plano georreferenciado(rocas) y mencionadas en la PIV.(priorizar revisión a medida que se ingrese a los sectores identificando la mejor manera de abordar la cosecha, teniendo en cuenta la seguridad del operador. Operadores deben asegurar periodicamente los recursos de faenas autoprotegidas para atender un amago de incendio efectivamente."
     },
     {
-        "titulo": "Colindante con zona de BNSM",
+        "titulo": "Colindante con zona de Bosque Nativo Sin Manejo (BNSM).",
         "medida": "Planificar sector a intervenir identificando limites junto a operador y jefe de faena. Operador debe contar con todos sus planos disponibles en tablet georreferenciados en tiempo real."
     },
     {
@@ -32,32 +36,36 @@
         "medida": "Recorrer el sector con el operador para verificar y planificar la zona o punto que va estar situado la asistencia para contar con una asistencia estable y segura ."
     },
     {
-        "titulo": "Especie Nativa en bosque quemado (Queule)",
-        "medida": "Planificar sector a intervenir identificando dicha especie. Jefe de faena debe orientar a operador sobre como identificar Queule en bosque quemado. Queule se encuentra con cinta biodegradable al interior de arboles con anillo rosado, esta identificación es realizada posterior al incendio forestal. Operador debe mantener acta de intervención georreferenciada en tiempo real para observar el acercamiento a la especie nativa. Ante cualquier evento no deseado se debe dar aviso inmediato a jefatura."
+        "titulo": "Especie protegida en bosque quemado (Queule).",
+        "medida": "Planificar sector a intervenir identificando dicha especie. Jefe de faena debe orientar a operador sobre como identificar Queule en bosque quemado. Los arboles cercanos al queule se encuentran anillados con pintura color rosada, esta identificación es realizada posterior al incendio forestal. Operador debe mantener acta de intervención georreferenciada en tiempo real para observar el acercamiento a la especie nativa. Ante cualquier evento no deseado se debe dar aviso inmediato a jefatura."
     },
     {
-        "titulo": "Buffer de 5 y 10 m",
-        "medida": "Realizar mapeo antes de intervenir los sectores colindantes, utilizar plano georreferenciado en todo momento. No cruzar el buffer."
+        "titulo": "Presencia de especies protegidas al interior del rodal (Pitao, Queule, otros)",
+        "medida": "Planificar sector a intervenir identificando dicha especie. Jefe de faena debe orientar a operador sobre como identificar los individuos. Operador debe mantener acta de intervención georreferenciada en tiempo real para observar el acercamiento a la especie nativa. Ante cualquier evento no deseado se debe dar aviso inmediato a jefatura. En caso de que no se encuentren identificados en terreno se deben marcar con cinta de peligro o biodegradable."
+    },
+    {
+        "titulo": "Buffer de 5, 10, 20 y\/o 30 m",
+        "medida": "Realizar mapeo antes de intervenir los sectores colindantes, utilizar plano georreferenciado en todo momento. Consultar autorización para intervenir el sector. No cruzar el buffer."
     },
     {
         "titulo": "Volteo alejado mayor a 30 metros del tendido electrico y carretera",
         "medida": "Las operaciones no debe estar a menos de 30 metros de volteo cercano a tendido electrico y carretera sin permiso vial y SODI."
     },
     {
-        "titulo": "Colindante con terceros",
-        "medida": "Identificar y demarcar los límites en la revisión del sector antes de intervenir, manteniendo en todo momento sus planos georreferenciados el operador"
+        "titulo": "Colindante con terceros.",
+        "medida": "Identificar y demarcar los límites en la revisión del sector antes de intervenir, utilizar en todo momento sus planos georreferenciados. Orientar el volteo hacia el interior del rodal. En caso de ser necesario marcar con cinta de peligro o biodegradable."
     },
     {
         "titulo": "Presencia de piedras - Roce con piedras",
-        "medida": "Predio siniestrado por incendio forestal. Al existir esta condición puede generar chispas y activar reactivar foco. Recorrer el escenario antes de comenzar los trabajos procediendo a identificar a(s)zona(s)con presencia de rocas y\/o piedras, tratando de evitar aproximarse a estos sectores cuando la roca exceda un tamaño el cual presente un peligro al transitar por encima de estas lo que podría Provocar un incendio. También deben estar demarcadas en plano georreferenciado(rocas) y mencionadas en la PIV.(priorizar revisión a medida que se ingrese a los sectores identificando la mejor manera de abordar la cosecha, teniendo en cuenta la seguridad."
+        "medida": "Al existir esta condición puede generar chispas y activar reactivar foco de incendio. Recorrer el escenario antes de comenzar los trabajos procediendo a identificar la(s) zona(s) con presencia de rocas y\/o piedras, tratando de evitar aproximarse a estos sectores cuando la roca exceda un tamaño el cual presente un peligro al transitar por encima de estas lo que podría Provocar un deslizamiento del equipo. También deben estar demarcadas en plano georreferenciado(rocas) y mencionadas en la PIV.(priorizar revisión a medida que se ingrese a los sectores identificando la mejor manera de abordar la cosecha."
     },
     {
         "titulo": "Daño por viento",
-        "medida": "Siempre planificar los sectores a intervenir evitando transitar la menor cantidad posible bajo arboles con condiciones de riesgo. No realizar cambios de cadenas cercanos al bosque en pie o realizar revisión del equipo de volteo cercano al bosque."
+        "medida": "Siempre planificar los sectores a intervenir evitando transitar la menor cantidad posible bajo arboles con condiciones de riesgo. Despejar la zona al tener que desplazarse con el equipo de volteo. No realizar cambios de cadenas cercanos al bosque en pie o realizar revisión del equipo de volteo cercano al bosque; estas actividades se deben realizar en zona despejada."
     },
     {
         "titulo": "Volteo colindante a camino público",
-        "medida": "Mantener autorización vigente antes de intervenir. Corroborar la existencia del documento. Planificar volteo cercano al camino público conforme a las distancias de seguridad de cada procesos y la instalación de los respectivos cortes de camino aplicando Aviso de peligro N°10 con empresa externa autorizada para cortar camino público. Coordinar el paso de vehículos paralizando el proceso de volteo. No ingresará ningún vehículo antes de confirmación por el operador."
+        "medida": "Mantener autorización vigente antes de intervenir. Corroborar la existencia del documento. Planificar volteo cercano al camino público conforme a las distancias de seguridad de cada proceso y la instalación de los respectivos cortes de camino aplicando Aviso de peligro N°10 con empresa externa autorizada para cortar camino público. Coordinar el paso de vehículos paralizando el proceso de volteo. No ingresará ningún vehículo antes de confirmación por el operador."
     },
     {
         "titulo": "Volteo cercano a tendido eléctrico",
@@ -72,23 +80,31 @@
         "medida": "Recorrer el sector antes de intervenir. En caso de ser necesario marcar con cinta de peligro. Utilizar planos georreferenciados."
     },
     {
-        "titulo": "Trozado y arrumado a orilla de camino predial",
-        "medida": "Implementar aviso de peligro N°10, asegurar el uso decanal 27. los cortes de camino deberán estar alejado mas de 100 metros de distancia y mantener comunicación activa entre operador"
+        "titulo": "Trozado y arrumado a orilla de camino predial.",
+        "medida": "Implementar aviso de peligro N°10, asegurar el uso decanal 27. los cortes de camino deberán estar alejado mas de 100 metros de distancia. Mantener comunicación efectiva en todo momento."
     },
     {
         "titulo": "Riesgo de amago de incendio ya sea por roce de piedra, en rodado, elementos de corte, trabajo en caliente",
         "medida": "1.- Aplicar Plan de emergencia de incendio. 2.- Verificar todos los recursos de prevención y combate ante un amago que estén en óptimas condiciones, (Basisaki, extintores, bomba de espalda, cámara térmica y Maclaud). 3.-Contar con comunicación radial o vías telefónicas de los números de la central de incendio y canal de incendio de la zona. 4.- Tomar todas las medidas y resguardo en volteo y trabajo en caliente (Planificación eficaz para el vigía y planificacion eficaz para trabajo en caliente ( limpiar zona de trabajo, humedecer y contar con los elementos de seguridad ante un amago."
     },
     {
-        "titulo": "Volteo a orilla de camino predial",
-        "medida": "Implementar aviso de peligro N°10, asegurar el uso decanal 27. los cortes de camino deberán estar alejado mas de 100 metros de distancia y mantener comunicación activa entre operador."
+        "titulo": "Volteo a orilla de camino predial.",
+        "medida": "Implementar aviso de peligro N°10, asegurar el uso de canal 27. los cortes de camino deberán estar alejado mas de 100 metros de distancia y mantener comunicación activa entre operador."
     },
     {
-        "titulo": "Arboles sobrediametro y sobre gancho",
-        "medida": "Evaluar caída de arbol para evitar inestabilidad de ella y dirección no deseada. Si esta condición se encuentra cercana a condiciones especiales, se debe evaluar posibilidad de apoyo con skidder"
+        "titulo": "Arboles sobrediametro y  ganchos gruesos",
+        "medida": "Evaluar caída de arbol para evitar inestabilidad del equipo de volteo y dirección no deseada durante la caida. Si esta condición se encuentra cercana a condiciones especiales, se debe evaluar posibilidad de apoyo con skidder"
     },
     {
-        "titulo": "Presencia de caminos antiguos al interior del rodal",
+        "titulo": "Presencia de caminos antiguos al interior del rodal.",
         "medida": "Recorrer el sector antes de intervenir, en caso de ser necesario marcar con cinta de peligro. Utilizar plano de sombras georreferenciado en todo momento."
+    },
+    {
+        "titulo": "Presencia de talud.",
+        "medida": "Recorrer el sector antes de intervenir, en caso de ser necesario marcar con cinta de peligro o biodegradable. Utilizar plano de sombras georreferenciado en todo momento. En caso de tener que descender con el equipo de volteo realizarlo en el sector donde menor sea la pendiente y el tramo sea menor."
+    },
+    {
+        "titulo": "Presencia de carcavas",
+        "medida": "Recorrer el escenario antes de comenzar los trabajos procediendo a identificar la(s)zona(s) con presencia cárcavas , marcar el sector con cinta de peligro o biodegradable y se debe evitar aproximarse a estos sectores. En caso de tener que intervenir dentro de la carcava, realizarlo solo con autorización. También deben estar demarcadas en plano georreferenciado"
     }
 ]

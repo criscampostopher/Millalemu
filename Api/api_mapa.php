@@ -248,7 +248,8 @@ try {
             $id_alerta = $inputData['id_alerta'] ?? 0;
             $lat = $inputData['lat'] ?? 0;
             $lng = $inputData['lng'] ?? 0;
-            $nombre_mapa = 'General / Sistema'; // Mapa por defecto
+            // AHORA RECIBE EL MAPA QUE EL CELULAR GUARDÓ OFFLINE
+            $nombre_mapa = $inputData['nombre_mapa'] ?? 'General / Sistema';
             
             // 1. TRADUCTOR DE ALERTAS MANUALES Y MAPAS
             // Si la ID es un número, significa que es una alerta creada en la BD

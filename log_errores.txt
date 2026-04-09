@@ -3983,3 +3983,47 @@ CONTEXT:  unnamed portal parameter $1 = ''
 [2026-04-02 17:36:22] Escudo Activo: Destinatario 128 ya firmó el PIV 111. Se omite.
 [2026-04-02 17:36:22] Escudo Activo: Destinatario 127 ya tiene pendiente el PIV 111.
 [2026-04-02 17:36:22] FIN DEL PROCESO
+[2026-04-08 02:36:01] ---------------------------------------------------
+[2026-04-08 02:36:01] INICIO DE SOLICITUD DE GUARDADO
+[2026-04-08 02:36:01] Usuario ID detectado: 3
+[2026-04-08 02:36:01] JSON Recibido (RAW): {"id_mapa":91,"fecha":"2026-04-08","consideraciones":"\n[MATRIZ:TWINCH]","observaciones":"","firma_cargo":"gg","firma_nombre":"admin","destinatarios":["127"],"grupos":{"1":["127"]}}
+[2026-04-08 02:36:01] Destinatarios encontrados (Array): Array
+(
+    [0] => 127
+)
+
+[2026-04-08 02:36:01] Grupos recibidos (Array): Array
+(
+    [1] => Array
+        (
+            [0] => 127
+        )
+
+)
+
+[2026-04-08 02:36:01] PIV creado exitosamente. ID: 112
+[2026-04-08 02:36:01] Iniciando bucle de destinatarios...
+[2026-04-08 02:36:01] --> INSERT EXITOSO: Destinatario 127 para PIV 112 (Grupo 1).
+[2026-04-08 02:36:01] FIN DEL PROCESO
+[2026-04-08 03:05:47] ---------------------------------------------------
+[2026-04-08 03:05:47] INICIO DE SOLICITUD DE GUARDADO
+[2026-04-08 03:05:47] Usuario ID detectado: 10
+[2026-04-08 03:05:47] JSON Recibido (RAW): {"id_mapa":91,"fecha":"2026-04-08","consideraciones":"\n[MATRIZ:TWINCH]","observaciones":"","firma_cargo":"ss","firma_nombre":"Giordano","destinatarios":["127"],"grupos":{"1":["127"]}}
+[2026-04-08 03:05:47] Destinatarios encontrados (Array): Array
+(
+    [0] => 127
+)
+
+[2026-04-08 03:05:47] Grupos recibidos (Array): Array
+(
+    [1] => Array
+        (
+            [0] => 127
+        )
+
+)
+
+[2026-04-08 03:05:47] PIV creado exitosamente. ID: 113
+[2026-04-08 03:05:47] Iniciando bucle de destinatarios...
+[2026-04-08 03:05:47] --> INSERT EXITOSO: Destinatario 127 para PIV 113 (Grupo 1).
+[2026-04-08 03:05:47] FIN DEL PROCESO

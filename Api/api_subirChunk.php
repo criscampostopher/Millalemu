@@ -29,8 +29,8 @@ function detectarPeligroPorColor($props) {
     $color = $props['FILL_COLOR'] ?? $props['Fill_Color'] ?? $props['fill_color'] ?? '';
     if (!$color) return false;
     $colorNorm = normalizarColor($color);
-    if ($colorNorm === 'RGB(128,128,64)') return 'Vegetación Nativa';
-    if ($colorNorm === 'RGB(0,128,255)') return 'Protección de Agua';
+    if ($colorNorm === 'RGB(128,128,64)') return 'Zona De Protección(Buffer)';
+    if ($colorNorm === 'RGB(0,128,255)') return 'Zona De Protección(Buffer)';
     return false;
 }
 
@@ -258,7 +258,7 @@ if ($chunkIndex == $totalChunks - 1) {
                             $sqlAlerta = "INSERT INTO public.peligro (nombre, descripcion, tipo, nivel, estado, id_mapa, id_usuario, geom) 
                                           VALUES (?, ?, 'poligono', 'Critico', 'activa', ?, ?, 
                                           ST_Multi(ST_Buffer(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326))::geography, 10)::geometry))";
-                            $pdo->prepare($sqlAlerta)->execute(["⚠️ Zona Protegida ($tipoDetectado)", "Buffer automático color (10m)", $nuevo_id_mapa, $id_usuario_actual, $geomJSON]);
+                            $pdo->prepare($sqlAlerta)->execute(["⚠️ Zona Protegida ($tipoDetectado)", "Buffer automático  (10m)", $nuevo_id_mapa, $id_usuario_actual, $geomJSON]);
                         }
                     }
                 }

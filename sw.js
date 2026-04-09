@@ -1,799 +1,98 @@
-<?php
-// ==========================================================
-// Archivo: index.php (v6.0 - Fix Cámara + Sistema Offline Intacto)
-// ==========================================================
-session_start();
-header("Cache-Control: no-cache, no-store, must-revalidate");
-header("Pragma: no-cache");
-header("Expires: 0");
+/* ==========================================================
+   sw.js - Service Worker v12 (Filtro Inteligente)
+   ========================================================== */
+const CACHE_NAME = 'millalemu-v12-smart';
 
-// 1. Seguridad de Sesión
-if (!isset($_SESSION['id_usuario'])) { header("Location: login.php"); exit; }
-require_once __DIR__ . '/Config/db_config.php'; 
+const URLS_TO_CACHE = [
+    './',
+    './index.php',
+    './menu_usuario.php',
+    './style_visor.css',
+    './style.css',
+    './script_visor.js',
+    'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
+    'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+    'https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js',
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png',
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-shadow.png'
+];
 
-$id_usuario   = $_SESSION['id_usuario'];
-$nombre_user  = $_SESSION['nombre_usuario'];
-$tipo_usuario = $_SESSION['tipo_usuario'];
-$es_admin     = ($tipo_usuario == 'admin');
+self.addEventListener('install', event => {
+    self.skipWaiting();
+    event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(URLS_TO_CACHE).catch(()=>{})));
+});
 
-// 2. Manejo de Mensajes 
-$mensaje = ""; $tipo_msg = ""; 
-if (isset($_GET['msg'])) {
-    $mensaje = htmlspecialchars($_GET['msg']);
-    $tipo_msg = $_GET['status'] ?? 'error';
+self.addEventListener('activate', event => {
+    event.waitUntil(caches.keys().then(keys => Promise.all(
+        keys.map(key => { if (key !== CACHE_NAME) return caches.delete(key); })
+    )));
+    self.clients.claim();
+});
+
+// FUNCIÓN CLAVE: Le quita la basura a la URL para que el caché no se confunda
+function limpiarURL(urlStr) {
+    const urlObj = new URL(urlStr, self.location.origin);
+    urlObj.searchParams.delete('nocache');
+    urlObj.searchParams.delete('t');
+    return urlObj.toString();
 }
 
-// -----------------------------------------------------------------------
-// 3. CARGA DE DATOS (Zonas, Categorías y Mapas)
-// -----------------------------------------------------------------------
-$lista_mapas_visualizar = [];
-$zonas_disponibles = []; 
-$id_mapa_actual = isset($_GET['focus_map']) ? (int)$_GET['focus_map'] : 0;
+self.addEventListener('fetch', event => {
+    if (event.request.method !== 'GET') return;
 
-if ($es_admin) {
-    // Añadimos la exclusión de sistema_oculto
-    $stmtZonas = $pdo->query("SELECT id_zona, nombre_zona FROM public.zona WHERE nombre_zona != 'SISTEMA_OCULTO' ORDER BY nombre_zona ASC");
-    $zonas_disponibles = $stmtZonas->fetchAll(PDO::FETCH_ASSOC);
+    const cleanUrl = limpiarURL(event.request.url);
 
-    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona 
-            FROM public.mapa m
-            LEFT JOIN public.zona z ON m.id_zona = z.id_zona
-            ORDER BY z.nombre_zona ASC, m.categoria ASC, m.nombre_mapa ASC";
-    $stmt = $pdo->query($sql);
-    $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-} else {
-    // B) Usuario: Carga mapas SEGÚN ZONAS + VALIDACIÓN DE FECHAS
-    $sql = "SELECT m.id_mapa, m.nombre_mapa, m.ruta_archivo, m.tipo_mapa, m.categoria, m.es_excluyente, m.id_zona, z.nombre_zona
-            FROM public.mapa m 
-            JOIN public.zona z ON m.id_zona = z.id_zona
-            JOIN public.usuario_zona uz ON z.id_zona = uz.id_zona 
-            WHERE uz.id_usuario = :id_usuario 
-            -- VALIDACIÓN DE FECHAS DE LA ZONA
-            AND (uz.fecha_inicio <= NOW()) 
-            AND (uz.fecha_fin IS NULL OR uz.fecha_fin >= NOW())";
-
-    // --- NUEVO: FILTRO INTELIGENTE SI ENTRA DESDE EL MENÚ ---
-    if ($id_mapa_actual > 0) {
-        $sql .= " AND z.id_zona = (SELECT id_zona FROM public.mapa WHERE id_mapa = :id_mapa_actual)";
-        $sql .= " AND (LOWER(m.categoria) != 'acta' OR m.id_mapa = :id_mapa_actual)";
-    }
-
-    $sql .= " ORDER BY z.nombre_zona ASC, m.categoria ASC";
-            
-    $stmt = $pdo->prepare($sql);
-    
-    $params = [':id_usuario' => $id_usuario];
-    if ($id_mapa_actual > 0) {
-        $params[':id_mapa_actual'] = $id_mapa_actual;
-    }
-    
-    $stmt->execute($params);
-    $lista_mapas_visualizar = $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
-
-// C) CORRECCIÓN DE RUTAS (El Puente Mágico)
-foreach ($lista_mapas_visualizar as &$mapa) {
-    if (strpos($mapa['ruta_archivo'], 'BD_STORED') !== false) {
-        $mapa['ruta_archivo'] = "Api/api_descargar_mapa.php?id=" . $mapa['id_mapa'];
-    } 
-    elseif (!empty($mapa['ruta_archivo']) && !filter_var($mapa['ruta_archivo'], FILTER_VALIDATE_URL)) {
-        if (strpos($mapa['ruta_archivo'], 'uploads/') === false) {
-            $mapa['ruta_archivo'] = "uploads/" . $mapa['ruta_archivo'];
-        }
-    }
-}
-unset($mapa); // Limpieza
-?>
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Visor Millalemu Pro</title>
-    
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" crossorigin="anonymous">
-    
-    <style>
-        /* ESTILOS GENERALES */
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; overflow: hidden; background: #2c3e50; }
-        
-        #loader { 
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-            background: rgba(255,255,255,0.9); z-index: 9999; 
-            display: none; justify-content: center; align-items: center; 
-            font-size: 1.5rem; color: #3498db; 
-        }
-
-        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-
-        .leaflet-right .leaflet-control-layers {
-            margin-top: 140px !important; margin-right: 20px !important;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important; border: none !important; border-radius: 8px !important;
-        }
-
-        /* Sidebars */
-        .sidebar {
-            position: fixed; top: 0; height: 100%; width: 320px;
-            background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(10px);
-            z-index: 2000; box-shadow: 0 0 20px rgba(0,0,0,0.2);
-            transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-            padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; 
-        }
-
-        .sidebar-left { left: 0; transform: translateX(-100%); border-right: 1px solid #eee; }
-        .sidebar-right { right: 0; transform: translateX(100%); border-left: 1px solid #eee; top: 10px; height: calc(100% - 20px); border-radius: 15px 0 0 15px; }
-        .sidebar-visible { transform: translateX(0) !important; }
-
-        .sidebar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #f1f1f1; padding-bottom: 10px; }
-        .close-btn { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #95a5a6; }
-        
-        .sidebar-footer { margin-top: auto; padding-top: 15px; padding-bottom: 10px; border-top: 1px solid #eee; width: 100%; box-sizing: border-box; }
-
-        /* Componentes UI */
-        .toggle-btn {
-            position: absolute; top: 20px; z-index: 1000; background: white; border: none; padding: 10px 15px;
-            border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); cursor: pointer; font-weight: bold; color: #2c3e50;
-            display: flex; align-items: center; gap: 8px; transition: transform 0.2s;
-        }
-        .toggle-btn:hover { transform: scale(1.05); }
-        #btn-left { left: 20px; } #btn-right { right: 20px; }
-
-        .gps-btn {
-            position: absolute; top: 80px; right: 20px; z-index: 1000; background: #3498db; color: white; width: 45px; height: 45px;
-            border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3); cursor: pointer; font-size: 1.2rem;
-        }
-
-        .user-card { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
-        .user-avatar { width: 40px; height: 40px; background: #34495e; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-        .badge-admin { background: #e74c3c; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
-        .badge-user { background: #27ae60; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; }
-
-        /* Botones de acción */
-        .btn-action {
-            width: 100%; padding: 12px; border: none; border-radius: 6px; cursor: pointer; 
-            font-weight: bold; transition: 0.2s; color: white; display: block; text-align: center; text-decoration: none; box-sizing: border-box;
-        }
-        .btn-upload { background: #3498db; margin-top: 15px; } 
-        .btn-panel { background: #8e44ad; margin-top: 10px; } 
-        .btn-logout { background: white; color: #e74c3c; border: 1px solid #e74c3c; }
-        .btn-reset { background: #e67e22; margin-top: 10px; }
-        
-        .btn-alert-on { background: #27ae60; color: white; font-size:0.8rem; }
-        .btn-alert-off { background: #95a5a6; color: white; font-size:0.8rem; }
-
-        /* Scroll Zonas */
-        .layers-scroll { overflow-y: auto; flex: 1; padding-right: 5px; }
-        .layers-scroll::-webkit-scrollbar { width: 6px; }
-        .layers-scroll::-webkit-scrollbar-thumb { background: #bdc3c7; border-radius: 3px; }
-
-        .zone-group { margin-bottom: 8px; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
-        .zone-header { padding: 12px; cursor: pointer; background: #ffffff; display: flex; align-items: center; justify-content: space-between; font-weight: 600; color: #2c3e50; }
-        .zone-header.active { background: #e8f6f3; color: #16a085; border-left: 4px solid #16a085; }
-        .zone-layers { display: none; padding: 10px; background: #fafafa; border-top: 1px solid #eee; }
-        .layer-item { display: flex; align-items: center; padding: 6px 0; font-size: 0.9rem; }
-        .badge-cat { font-size: 0.7rem; padding: 2px 5px; background: #95a5a6; color: white; border-radius: 4px; margin-left: auto; }
-
-        /* Formulario Inputs */
-        form label { font-size: 0.85rem; font-weight: bold; color: #7f8c8d; display: block; margin-top: 10px; }
-        form input, form select { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #dfe6e9; border-radius: 6px; box-sizing: border-box; }
-        .custom-file-upload { display: inline-block; padding: 10px; cursor: pointer; background: #ecf0f1; color: #2c3e50; border-radius: 6px; text-align: center; width: 100%; margin-top: 5px; border: 1px dashed #bdc3c7; font-size: 0.9rem; box-sizing: border-box; }
-        input[type="file"] { display: none; }
-
-        /* Alertas */
-        #alertas { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 3000; width: 90%; max-width: 400px; }
-        .alerta-card { background: #c0392b; color: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-top: 10px; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
-        #markerFormContainer { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 10px; z-index: 4000; box-shadow: 0 0 20px rgba(0,0,0,0.4); width: 300px; }
-
-        /* Modal de Recorte PIV */
-        #cropModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:5000; flex-direction:column; align-items:center; justify-content:center; }
-        #cropContainer { max-width:90%; max-height:80%; background:#000; box-shadow:0 0 20px rgba(255,255,255,0.2); }
-        #cropActions { margin-top:15px; display:flex; gap:15px; }
-
-        @media (max-width: 768px) {
-            .sidebar { width: 100% !important; border-radius: 0 !important; top: 0 !important; height: 100% !important; }
-            .toggle-btn span { display: none; } 
-        }
-    </style>
-</head>
-<body>
-
-    <div id="loader"><i class="fas fa-circle-notch fa-spin"></i> Cargando...</div>
-    <div id="map"></div>
-
-    <button id="btn-left" class="toggle-btn" onclick="toggleSidebar('left')"><i class="fas fa-bars"></i> <span>Menú</span></button>
-    <button id="btn-right" class="toggle-btn" onclick="toggleSidebar('right')"><i class="fas fa-map"></i> <span>Predios</span></button>
-    <div class="gps-btn" onclick="centrarEnUsuario()" title="Mi Ubicación"><i class="fas fa-location-arrow"></i></div>
-
-    <div id="sidebar-left" class="sidebar sidebar-left">
-        <div class="sidebar-header">
-            <h2 style="margin:0; font-size:1.2rem; color:#2c3e50;"><i class="fas fa-leaf"></i> Millalemu</h2>
-            <button class="close-btn" onclick="toggleSidebar('left')">&times;</button>
-        </div>
-
-        <div class="user-card">
-            <div class="user-avatar"><?php echo strtoupper(substr($nombre_user, 0, 1)); ?></div>
-            <div>
-                <div style="font-weight:bold;"><?php echo htmlspecialchars($nombre_user); ?></div>
-                <span class="<?php echo $es_admin ? 'badge-admin' : 'badge-user'; ?>"><?php echo $es_admin ? 'Supervisor' : 'Operador'; ?></span>
-            </div>
-        </div>
-
-        <div style="flex:1; overflow-y:auto; padding-right:5px;">
-            <?php if ($es_admin) { ?>
-                <h4 style="margin: 10px 0; color:#3498db;">Subir un Nuevo Mapa </h4>
-                <form action="Api/api_subirMapa.php" method="post" enctype="multipart/form-data" id="uploadForm">
-                    <a href="piv_formulario.php" class="btn-action" style="background:#27ae60; margin-bottom:10px; text-decoration:none;">
-                        <i class="fas fa-clipboard-list"></i> <b>INGRESAR AL PIV</b>
-                    </a>
-                    <button type="button" onclick="iniciarCapturaPIV()" class="btn-action" style="background:#8e44ad; margin-bottom:15px;">
-                        <i class="fas fa-camera"></i> <b>FOTO PIV</b>
-                    </button>
-
-                    <label>1. Predio:</label>
-                    <input list="lista_zonas" name="nombre_zona" placeholder="Escribe o selecciona..." required autocomplete="off">
-                    <datalist id="lista_zonas">
-                        <?php foreach($zonas_disponibles as $z): echo "<option value='".htmlspecialchars($z['nombre_zona'])."'>"; endforeach; ?>
-                    </datalist>
-                    <label>2. Categoría:</label>
-                    <select name="categoria">
-                        <option value="Escenario">Escenario General</option>
-                        <option value="Pendiente">Pendiente</option>
-                        <option value="Uso de Suelo">Uso de Suelo</option>
-                        <option value="Acta">Acta</option>
-                        <option value="Otro">Otro</option>
-                    </select>
-                    <label>3. Archivo:</label>
-                    <label for="file-upload" class="custom-file-upload"><i class="fas fa-cloud-upload-alt"></i> Seleccionar (KML/GeoJSON)</label>
-                    <input id="file-upload" type="file" name="mapa" accept=".geojson, .kml, .kmz" required onchange="subirMapaPorTrozos()">
-                </form>
-                <?php if(!empty($mensaje)) echo "<div style='font-size:0.85em; padding:10px; margin-top:10px; border-radius:4px; background:".($tipo_msg=='success'?'#d4edda':'#f8d7da')."; color:".($tipo_msg=='success'?'#155724':'#721c24').";'>$mensaje</div>"; ?>
-                
-                <a href="menuadmin.php" class="btn-action btn-panel"><i class="fas fa-tachometer-alt"></i> Volver al Panel</a>
-                <button id="borrarMarcadores" class="btn-action btn-reset"><i class="fas fa-trash"></i> Resetear Sistema</button>
-            <?php } else { ?>
-                
-                <a href="menu_usuario.php" class="btn-action btn-panel" style="margin-bottom:15px; text-decoration:none;">
-                    <i class="fas fa-home"></i> Volver al Menú
-                </a>
-
-                <?php if ($tipo_usuario === 'jefe_faena') { ?>
-                    <button type="button" onclick="iniciarCapturaPIV()" class="btn-action" style="background:#9b59b6; margin-bottom:15px; border:none; cursor:pointer; width: 100%; color: white; padding: 12px; border-radius: 6px; font-weight: bold; box-sizing:border-box;">
-                        <i class="fas fa-camera"></i> ACTUALIZAR FOTO PDF
-                    </button>
-                <?php } ?>
-
-                <button onclick="abrirModalReporteTrabajador()" class="btn-action" style="background:#e67e22; margin-bottom:15px; border:none; cursor:pointer; width: 100%; color: white; padding: 12px; border-radius: 6px; font-weight: bold; box-sizing:border-box;">
-                    <i class="fas fa-map-marker-alt"></i> REPORTAR PELIGRO (GPS)
-                </button>
-                <div style="background: #fdf2f2; padding: 15px; border-radius: 10px; border: 1px solid #f5c6cb; margin-top: 15px;">
-                    <h4 style="margin: 0 0 10px 0; color: #721c24; font-size: 0.9rem; text-align:center;"><i class="fas fa-shield-alt"></i> PROTECCIÓN ACTIVA</h4>
-                    
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <span style="font-size:0.85rem; font-weight:bold; color:#2c3e50;">General / Actas</span>
-                        <button id="btnToggleGeneral" onclick="toggleSeguridad('general')" class="btn-action btn-alert-on" style="width:60px; padding:5px; margin:0;">ON</button>
-                    </div>
-
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:0.85rem; font-weight:bold; color:#2c3e50;">Pendientes</span>
-                        <button id="btnTogglePendiente" onclick="toggleSeguridad('pendiente')" class="btn-action btn-alert-on" style="width:60px; padding:5px; margin:0;">ON</button>
-                    </div>
-                    <small style="display:block; text-align:center; color:#7f8c8d; margin-top:8px; font-size:0.7rem;">(Funciona aunque ocultes el mapa)</small>
-                </div>
-
-            <?php } ?>
-        </div>
-
-        <div class="sidebar-footer">
-            <a href="logout.php" class="btn-action btn-logout"><i class="fas fa-sign-out-alt"></i> Cerrar Sesión</a>
-        </div>
-    </div>
-
-    <div id="sidebar-right" class="sidebar sidebar-right">
-        <div class="sidebar-header">
-            <h3 style="margin:0;">🗺️ Predios y Mapas</h3>
-            <button class="close-btn" onclick="toggleSidebar('right')">&times;</button>
-        </div>
-        <div id="layers-container" class="layers-scroll">
-            <div style="text-align:center; color:#999; margin-top:20px;"><i class="fas fa-circle-notch fa-spin"></i> Cargando Predios...</div>
-        </div>
-    </div>
-
-    <div id="alertas"></div>
-
-    <div id="markerFormContainer">
-        <form id="markerForm">
-            <h3 style="text-align:center; margin-top:0;">Nueva Alerta</h3>
-            <label>Asignar a Mapa:</label> <select id="selectorMapaForm"></select>
-            <label>Título:</label> <input type="text" id="popupNombre" required>
-            <label>Descripción:</label> <input type="text" id="popupDesc">
-            <label>Nivel:</label> 
-            <select id="popupIcon">
-                <option value="Critico">🔴 Crítico</option>
-                <option value="Alto">🟠 Alto</option>
-                <option value="Medio">🟢 Medio</option>
-            </select>
-            <label>Radio (m):</label> <input type="number" id="popupRadio" placeholder="0" min="0">
-            <div style="display:flex; gap:10px; margin-top:15px;">
-                <button type="submit" class="btn-action btn-upload" style="margin:0;">Guardar</button>
-                <button type="button" id="cancelMarker" class="btn-action" style="margin:0; background:#95a5a6;">Cancelar</button>
-            </div>
-        </form>
-    </div>
-
-    <div id="modalReporteTrabajador" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:20px; border-radius:10px; z-index:99999; box-shadow:0 0 20px rgba(0,0,0,0.5); width: 320px; max-width: 90%;">
-        <form id="formReporteTrabajador">
-            <h3 style="text-align:center; margin-top:0; color:#e67e22;"><i class="fas fa-map-marker-alt"></i> Nueva Alerta</h3>
-            
-            <label style="font-weight:bold; font-size:0.9rem; color:#333;">Título / Peligro:</label>
-            <input type="text" id="repTrabNombre" required style="width:100%; margin-bottom:10px; padding:8px; border-radius:5px; border:1px solid #ccc; box-sizing:border-box;" placeholder="Ej: Panal de abejas">
-            
-            <label style="font-weight:bold; font-size:0.9rem; color:#333;">Descripción (Opcional):</label>
-            <input type="text" id="repTrabDesc" style="width:100%; margin-bottom:10px; padding:8px; border-radius:5px; border:1px solid #ccc; box-sizing:border-box;">
-            
-            <label style="font-weight:bold; font-size:0.9rem; color:#333;">Nivel de Riesgo:</label>
-            <select id="repTrabNivel" style="width:100%; margin-bottom:10px; padding:8px; border-radius:5px; border:1px solid #ccc; box-sizing:border-box;">
-                <option value="Critico">🔴 Crítico</option>
-                <option value="Alto" selected>🟠 Alto</option>
-                <option value="Medio">🟢 Medio</option>
-            </select>
-            
-            <label style="font-weight:bold; font-size:0.9rem; color:#333;">Radio de Peligro (m):</label>
-            <input type="number" id="repTrabRadio" placeholder="Ej: 15" min="0" style="width:100%; margin-bottom:10px; padding:8px; border-radius:5px; border:1px solid #ccc; box-sizing:border-box;">
-            
-            <p id="repTrabStatusGps" style="font-size:0.85rem; font-weight:bold; text-align:center; margin:10px 0; padding:5px; background:#f8f9fa; border-radius:5px;">
-                <i class="fas fa-satellite-dish fa-spin"></i> Obteniendo ubicación...
-            </p>
-            
-            <input type="hidden" id="repTrabLat">
-            <input type="hidden" id="repTrabLng">
-
-            <div style="display:flex; gap:10px; margin-top:15px;">
-                <button type="submit" id="repTrabSubmit" class="btn-action" style="margin:0; width:50%; background:#27ae60; color:white; font-weight:bold; border:none; padding:10px; border-radius:5px; cursor:pointer;" disabled>Guardar</button>
-                <button type="button" onclick="cerrarModalReporteTrabajador()" class="btn-action" style="margin:0; background:#95a5a6; width:50%; color:white; font-weight:bold; border:none; padding:10px; border-radius:5px; cursor:pointer;">Cancelar</button>
-            </div>
-        </form>
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.min.js"></script>
-    <script src='https://api.tiles.mapbox.com/mapbox.js/plugins/leaflet-omnivore/v0.3.1/leaflet-omnivore.min.js'></script>
-    
-    <script src="https://unpkg.com/leaflet-simple-map-screenshoter"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
-
-    <script>
-        const LISTA_MAPAS = <?php echo json_encode($lista_mapas_visualizar); ?>;
-        const MAPA_ID_ACTUAL = <?php echo $id_mapa_actual; ?>;
-        const IS_ADMIN = <?php echo $es_admin ? 'true' : 'false'; ?>;
-        const ID_MI_USUARIO = <?= isset($_SESSION['id_usuario']) ? $_SESSION['id_usuario'] : 0 ?>;
-        const MI_ROL = "<?= isset($_SESSION['tipo_usuario']) ? $_SESSION['tipo_usuario'] : '' ?>";
-
-        function toggleSidebar(side) {
-            const el = document.getElementById('sidebar-' + side);
-            const other = document.getElementById('sidebar-' + (side === 'left' ? 'right' : 'left'));
-            if(window.innerWidth < 768) other.classList.remove('sidebar-visible');
-            el.classList.toggle('sidebar-visible');
-        }
-
-        // =======================================================
-        // SCRIPT: REPORTE MANUAL CON GPS DEL TRABAJADOR
-        // =======================================================
-        function abrirModalReporteTrabajador() {
-            document.getElementById('modalReporteTrabajador').style.display = 'block';
-            const statusGps = document.getElementById('repTrabStatusGps');
-            const btnSubmit = document.getElementById('repTrabSubmit');
-            
-            statusGps.innerHTML = '<i class="fas fa-satellite-dish fa-spin"></i> Buscando señal GPS...';
-            statusGps.style.color = "#e67e22";
-            btnSubmit.disabled = true;
-
-            if ("geolocation" in navigator) {
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        document.getElementById('repTrabLat').value = position.coords.latitude;
-                        document.getElementById('repTrabLng').value = position.coords.longitude;
-                        statusGps.innerHTML = `✅ Ubicación lista (Precisión: ${position.coords.accuracy.toFixed(0)}m)`;
-                        statusGps.style.color = "#27ae60";
-                        btnSubmit.disabled = false; 
-                    }, 
-                    function(error) {
-                        statusGps.innerHTML = "❌ Error GPS: Activa tu ubicación y da permisos al navegador.";
-                        statusGps.style.color = "#c0392b";
-                        alert("No pudimos obtener tu ubicación.\nPor favor, asegúrate de tener el GPS activado y de darle permisos a la página.");
-                    }, 
-                    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-                );
-            } else {
-                statusGps.innerHTML = "❌ Tu dispositivo no soporta GPS.";
-                statusGps.style.color = "#c0392b";
-            }
-        }
-
-        function cerrarModalReporteTrabajador() {
-            document.getElementById('modalReporteTrabajador').style.display = 'none';
-            document.getElementById('formReporteTrabajador').reset();
-        }
-
-        // =======================================================
-        // SISTEMA OFFLINE Y GUARDADO DE ALERTAS MANUALES
-        // =======================================================
-        const offlineIndicator = document.getElementById('offlineIndicator');
-        const offlineCount = document.getElementById('offlineCount');
-        
-        window.borrarAlertaOfflineLocal = function(lat, lng) {
-            if(confirm("¿Estás seguro de descartar esta alerta local?")) {
-                let pendientes = JSON.parse(localStorage.getItem('alertasOffline')) || [];
-                pendientes = pendientes.filter(p => p.lat != lat || p.lng != lng);
-                localStorage.setItem('alertasOffline', JSON.stringify(pendientes));
-                
-                map.closePopup();
-
-                map.eachLayer(function(layer) {
-                    if (layer.options && layer.options.icon && layer.options.icon.options.className === 'custom-offline-icon') {
-                        map.removeLayer(layer);
-                    }
-                    if (layer.options && layer.options.dashArray === '5, 5' && layer.options.color === '#e74c3c') {
-                        map.removeLayer(layer);
-                    }
-                });
-
-                if (typeof marcadoresPeligro !== 'undefined') {
-                    marcadoresPeligro = marcadoresPeligro.filter(m => !(m.lat == lat && m.lng == lng));
+    event.respondWith(
+        fetch(event.request)
+            .then(networkResponse => {
+                if (networkResponse && (networkResponse.status === 200 || networkResponse.status === 0)) {
+                    const responseClone = networkResponse.clone();
+                    caches.open(CACHE_NAME).then(cache => {
+                        // Guardamos usando el nombre LIMPIO
+                        cache.put(cleanUrl, responseClone);
+                    });
                 }
-
-                actualizarUIOffline(); 
-                pendientes.forEach(p => dibujarAlertaOffline(p));
-                alert("🗑️ Alerta local descartada exitosamente.");
-            }
-        };
-
-        function actualizarUIOffline() {
-            let pendientes = JSON.parse(localStorage.getItem('alertasOffline')) || [];
-            if (pendientes.length > 0) {
-                if(offlineIndicator) offlineIndicator.style.display = 'block';
-                if(offlineCount) offlineCount.innerText = pendientes.length;
-                if (navigator.onLine) {
-                    if(offlineIndicator) {
-                        offlineIndicator.style.background = '#f39c12';
-                        offlineIndicator.innerHTML = `<i class="fas fa-sync fa-spin"></i> Subiendo ${pendientes.length} alertas...`;
-                    }
-                } else {
-                    if(offlineIndicator) {
-                        offlineIndicator.style.background = '#e74c3c';
-                        offlineIndicator.innerHTML = `<i class="fas fa-wifi-slash"></i> <span id="offlineCount">${pendientes.length}</span> pendientes (Sin red)`;
-                    }
-                }
-            } else {
-                if(offlineIndicator) offlineIndicator.style.display = 'none';
-            }
-        }
-
-        const formReporte = document.getElementById('formReporteTrabajador');
-        if (formReporte) {
-            formReporte.addEventListener('submit', function(e) {
-                e.preventDefault();
-                const btn = document.getElementById('repTrabSubmit');
-                if(btn) { btn.disabled = true; btn.innerText = "Procesando..."; }
-
-                const payload = {
-                    action: 'add_marker',
-                    lat: document.getElementById('repTrabLat').value,
-                    lng: document.getElementById('repTrabLng').value,
-                    nombre: document.getElementById('repTrabNombre').value,
-                    descripcion: document.getElementById('repTrabDesc').value,
-                    nivel: document.getElementById('repTrabNivel').value,
-                    radio: document.getElementById('repTrabRadio').value || 0
-                };
-
-                if (navigator.onLine) {
-                    enviarAlServidor(payload, false);
-                } else {
-                    guardarLocalmente(payload);
-                    if(typeof cerrarModalReporteTrabajador === 'function') cerrarModalReporteTrabajador();
-                    if(btn) { btn.disabled = false; btn.innerText = "Guardar"; }
-                }
-            });
-        }
-
-        function guardarLocalmente(payload) {
-            let pendientes = JSON.parse(localStorage.getItem('alertasOffline')) || [];
-            pendientes.push(payload);
-            localStorage.setItem('alertasOffline', JSON.stringify(pendientes));
-            actualizarUIOffline();
-            dibujarAlertaOffline(payload);
-            alert("⚠️ Estás sin conexión a Internet.\n\nLa alerta se guardó en tu teléfono y ya está activa en tu mapa. Se subirá automáticamente cuando recuperes la señal.");
-        }
-
-        function dibujarAlertaOffline(data) {
-            if (typeof L === 'undefined' || typeof map === 'undefined' || !map) {
-                setTimeout(() => dibujarAlertaOffline(data), 500);
-                return;
-            }
-
-            const lat = parseFloat(data.lat);
-            const lng = parseFloat(data.lng);
-            const nivel = data.nivel || 'Alto';
-            const radio = parseFloat(data.radio) || 0;
-            const nombre = data.nombre || 'Alerta Local';
-
-            const iconEmoji = nivel.toLowerCase() === 'critico' ? '🔴' : (nivel.toLowerCase() === 'medio' ? '🟢' : '🟠');
-            const localIcon = L.divIcon({
-                className: 'custom-offline-icon',
-                html: `<div style="font-size:24px; filter: grayscale(30%);">${iconEmoji}</div>
-                       <div style="font-size:9px; background:#e74c3c; color:white; border-radius:3px; padding:1px 3px; margin-top:-5px; text-align:center; box-shadow: 0 1px 3px rgba(0,0,0,0.5);">OFFLINE</div>`,
-                iconSize: [30, 40],
-                iconAnchor: [15, 20]
-            });
-
-            const marker = L.marker([lat, lng], {icon: localIcon}).addTo(map);
-            
-            const desc = data.descripcion ? `<div style="margin-top:6px; font-size:0.85rem; color:#555; background:#f9f9f9; padding:8px; border-radius:4px; border-left:3px solid #f39c12;"><i>"${data.descripcion}"</i></div>` : '';
-            const rolUsuario = "<?php echo $es_admin ? 'Supervisor' : 'Operador'; ?>";
-            const nombreUsuario = "<?php echo htmlspecialchars($nombre_user); ?>";
-            const creador = `<div style="margin-top:8px; font-size:0.75rem; color:#2980b9; text-transform: capitalize;"><b><i class="fas fa-user-shield"></i> ${rolUsuario}:</b> ${nombreUsuario}</div>`;
-
-            let htmlPopup = `
-                <div style="min-width: 180px; font-family: 'Segoe UI', sans-serif;">
-                    <h4 style="margin:0 0 5px 0; color:#e74c3c; font-size:1.1rem; border-bottom:1px solid #eee; padding-bottom:5px;"><i class="fas fa-exclamation-triangle"></i> ${nombre}</h4>
-                    ${desc}
-                    ${creador}
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
-                        <div style="color:#e74c3c; font-size:0.80rem; font-weight:bold;">
-                            <i class="fas fa-wifi-slash"></i> Sin red
-                        </div>
-                        <button onclick="borrarAlertaOfflineLocal('${lat}', '${lng}')" style="background:#e74c3c; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:bold;"><i class="fas fa-trash"></i> Descartar</button>
-                    </div>
-                </div>
-            `;
-            marker.bindPopup(htmlPopup);
-
-            if (radio > 0) {
-                L.circle([lat, lng], {
-                    color: '#e74c3c', fillColor: '#e74c3c', fillOpacity: 0.1, radius: radio, dashArray: '5, 5'
-                }).addTo(map);
-            }
-
-            marker.tipo_geom = 'Point';
-            marker.radio_custom = radio;
-            marker.nombre_alerta = nombre;
-            marker.id_db = 'offline_' + Date.now(); 
-
-            if (typeof marcadoresPeligro !== 'undefined') {
-                marcadoresPeligro.push(marker);
-            }
-        }
-
-        function enviarAlServidor(payload, esSincronizacion) {
-            const btn = document.getElementById('repTrabSubmit');
-            fetch('Api/api_mapa.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                return networkResponse;
             })
-            .then(r => r.json())
-            .then(res => {
-                if(res.success && !esSincronizacion) {
-                    alert("📍 ¡Peligro reportado exitosamente!");
-                    if(typeof cerrarModalReporteTrabajador === 'function') cerrarModalReporteTrabajador();
-                    location.reload(); 
-                }
-            })
-            .catch(err => {
-                if(!esSincronizacion) {
-                    guardarLocalmente(payload);
-                    if(typeof cerrarModalReporteTrabajador === 'function') cerrarModalReporteTrabajador();
-                }
-            })
-            .finally(() => {
-                if(btn) { btn.disabled = false; btn.innerText = "Guardar"; }
-            });
-        }
+            .catch(() => {
+                // OFFLINE: Buscamos en la mochila usando el nombre LIMPIO
+                return caches.match(cleanUrl, { ignoreSearch: false }).then(cachedRes => {
+                    if (cachedRes) return cachedRes;
 
-        function sincronizarPendientes() {
-            if (!navigator.onLine) return;
-            
-            let pendientes = JSON.parse(localStorage.getItem('alertasOffline')) || [];
-            if (pendientes.length === 0) return;
-            actualizarUIOffline();
-
-            let alertasRestantes = []; 
-            let alertasExitosas = 0;
-
-            let promesas = pendientes.map(payload => {
-                return fetch('Api/api_mapa.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                })
-                .then(async r => {
-                    if (r.redirected || !r.ok) throw new Error('Sesión caducada o error de red');
-                    return r.json();
-                })
-                .then(res => {
-                    if (res.success) {
-                        alertasExitosas++;
-                    } else {
-                        alertasRestantes.push(payload);
+                    if (event.request.mode === 'navigate') {
+                        const navUrl = new URL(event.request.url);
+                        return caches.match(navUrl.pathname, { ignoreSearch: true }).then(res => {
+                            return res || caches.match('./index.php', { ignoreSearch: true });
+                        });
                     }
-                })
-                .catch(err => {
-                    alertasRestantes.push(payload);
+                    return new Response("Offline", { status: 404 });
                 });
-            });
+            })
+    );
+});
 
-            Promise.allSettled(promesas).then(() => {
-                localStorage.setItem('alertasOffline', JSON.stringify(alertasRestantes));
-                actualizarUIOffline();
-
-                if (alertasExitosas > 0) {
-                    alert(`✅ ¡Se subieron ${alertasExitosas} alertas exitosamente al servidor!`);
-                    location.reload(); 
-                } else if (alertasRestantes.length > 0) {
-                    alert("⚠️ No se pudieron subir las alertas. Es probable que tu sesión haya caducado. La página se recargará para reconectar.");
-                    location.reload(); 
-                }
-            });
-        }
-
-        function sincronizarFirmasSeguridad() {
-            if (!navigator.onLine) return; 
-            
-            let firmasPendientes = JSON.parse(localStorage.getItem('firmasSeguridadOffline')) || [];
-            if (firmasPendientes.length === 0) return; 
-
-            let firmasFallidas = [];
-            let promesas = firmasPendientes.map(firma => {
-                return fetch('Api/api_mapa.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(firma)
-                })
-                .then(async r => {
-                    if (!r.ok || r.redirected) throw new Error("Sin sesión PHP");
-                    return r.json();
-                })
-                .then(res => {
-                    if (!res.success) throw new Error("Error interno al guardar");
-                })
-                .catch(err => {
-                    firmasFallidas.push(firma);
+self.addEventListener('message', event => {
+    if (event.data.action === 'CACHE_NEW_ZONE') {
+        event.waitUntil(
+            caches.open(CACHE_NAME).then(async cache => {
+                const promesas = event.data.urls.map(url => {
+                    const urlFresca = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                    return fetch(urlFresca).then(res => {
+                        if (res.ok) {
+                            // Se guarda con la ruta original limpia, sin el timestamp
+                            return cache.put(url, res);
+                        }
+                    }).catch(e => console.error("Fallo al cachear offline:", url));
                 });
-            });
-
-            Promise.allSettled(promesas).then(() => {
-                localStorage.setItem('firmasSeguridadOffline', JSON.stringify(firmasFallidas));
-            });
-        }
-
-        // ==========================================
-        // ROBOT SINCRONIZADOR DE FOTOS PIV OFFLINE
-        // ==========================================
-        function sincronizarCapturasOffline() {
-            if (!navigator.onLine) return;
-
-            let capturas = JSON.parse(localStorage.getItem('capturas_offline')) || [];
-            if (capturas.length === 0) return;
-
-            let fallidas = [];
-            let promesas = capturas.map(cap => {
-                return fetch('guardar_captura_mapa.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(cap)
-                })
-                .then(r => r.json())
-                .then(res => {
-                    if(!res.success) throw new Error("Fallo interno");
-                }).catch(() => fallidas.push(cap));
-            });
-
-            Promise.allSettled(promesas).then(() => {
-                localStorage.setItem('capturas_offline', JSON.stringify(fallidas));
-                if(capturas.length > fallidas.length) console.log("✅ Fotos del mapa sincronizadas al servidor.");
-            });
-        }
-
-        window.addEventListener('online', () => {
-            sincronizarPendientes();
-            sincronizarFirmasSeguridad();
-            sincronizarCapturasOffline();
-        });
-
-        window.addEventListener('offline', actualizarUIOffline);
-
-        document.addEventListener('DOMContentLoaded', () => {
-            actualizarUIOffline();
-            sincronizarPendientes();
-            sincronizarFirmasSeguridad();
-            sincronizarCapturasOffline();
-
-            let pendientes = JSON.parse(localStorage.getItem('alertasOffline')) || [];
-            pendientes.forEach(payload => {
-                dibujarAlertaOffline(payload);
-            });
-        });
-
-        async function subirMapaPorTrozos() {
-            const input = document.getElementById('file-upload');
-            const file = input.files[0];
-            if (!file) return;
-
-            const zonaInput = document.querySelector('input[name="nombre_zona"]').value.trim();
-            if (!zonaInput) {
-                alert("⚠️ Por favor, escribe o selecciona una Zona antes de subir el mapa.");
-                input.value = ''; 
-                return;
-            }
-
-            if (!confirm(`¿Subir este mapa de ${(file.size / 1024 / 1024).toFixed(2)} MB?`)) {
-                input.value = '';
-                return;
-            }
-
-            const loader = document.getElementById('loader');
-            loader.innerHTML = `
-                <div style="text-align:center; color:#3498db; background:white; padding:30px; border-radius:10px; box-shadow:0 0 20px rgba(0,0,0,0.2);">
-                    <i class="fas fa-circle-notch fa-spin" style="font-size:3rem; margin-bottom:15px;"></i><br>
-                    <strong style="font-size:1.2rem;">Subiendo Mapa ...</strong><br>
-                    <span id="progreso-subida" style="font-size:1.5rem; font-weight:bold; color:#2c3e50;">0%</span>
-                </div>`;
-            loader.style.display = 'flex';
-
-            const chunkSize = 1048576; 
-            const totalChunks = Math.ceil(file.size / chunkSize);
-            const categoria = document.querySelector('select[name="categoria"]').value;
-            const uniqueFileId = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9.]/g, '');
-
-            for (let i = 0; i < totalChunks; i++) {
-                const start = i * chunkSize;
-                const end = Math.min(start + chunkSize, file.size);
-                const chunk = file.slice(start, end);
-
-                const formData = new FormData();
-                formData.append('chunk', chunk);
-                formData.append('chunkIndex', i);
-                formData.append('totalChunks', totalChunks);
-                formData.append('fileName', file.name);
-                formData.append('fileId', uniqueFileId);
-                formData.append('nombre_zona', zonaInput);
-                formData.append('categoria', categoria);
-
-                try {
-                    const response = await fetch('Api/api_subirChunk.php', { method: 'POST', body: formData });
-                    const textResponse = await response.text();
-                    let result;
-                    try { result = JSON.parse(textResponse); } catch (err) { throw new Error("El servidor no devolvió un JSON válido."); }
-                    
-                    if (!result.success) {
-                        alert("❌ Error del Servidor: " + result.error);
-                        loader.style.display = 'none';
-                        input.value = '';
-                        return;
-                    }
-
-                    const percent = Math.round(((i + 1) / totalChunks) * 100);
-                    document.getElementById('progreso-subida').innerText = percent + '%';
-
-                    if (result.completed) {
-                        window.location.href = "index.php?status=success&focus_map=" + result.id_mapa + "&msg=Mapa de gran tamaño procesado y guardado con éxito.";
-                        return;
-                    }
-
-                } catch (error) {
-                    alert("❌ Ocurrió un error de red o de procesamiento. Revisa la consola.");
-                    loader.style.display = 'none';
-                    input.value = '';
-                    return;
-                }
-            }
-        }
-    </script>
-    
-    <script src="script_visor.js?v=4.1"></script>
-
-</body>
-</html>
+                await Promise.all(promesas);
+                self.clients.matchAll().then(cl => cl.forEach(c => c.postMessage({ 
+                    action: 'ZONE_CACHED_OK', zoneId: event.data.zoneId 
+                })));
+            })
+        );
+    }
+});

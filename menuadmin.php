@@ -80,9 +80,9 @@ if (isset($_GET['ajax_alertas_manuales']) && $es_admin) {
                JOIN public.usuario u ON p.id_usuario = u.id_usuario
                LEFT JOIN public.mapa m ON p.id_mapa = m.id_mapa
                WHERE p.id_usuario IS NOT NULL 
-               AND p.nombre NOT ILIKE 'PENDIENTE%'   
+               AND p.nombre NOT ILIKE 'PENDIENTE CRÍTICA'   
                AND p.nombre NOT ILIKE '%Límite de Acta%'
-            AND p.nombre NOT ILIKE '%Zona Protegida (Vegetación Nativa)%'
+            AND p.nombre NOT ILIKE '%Zona Protegida (Zona De Protección(Buffer))%'
             AND p.nombre NOT ILIKE '%Zona Protegida (Protección de Agua)%'";
                
                
@@ -212,6 +212,50 @@ try {
     </style>
 </head>
 <body>
+<?php
+// --- INICIO: ALERTA FLOTANTE DINÁMICA DE CIERRE (Desaparece en 4 seg) ---
+require_once __DIR__ . '/Config/db_config.php'; // Aseguramos conexión a la BD
+$roles_autorizados = ['ingeniero_forestal', 'jefe_operaciones', 'admin'];
+
+if (isset($_SESSION['tipo_usuario']) && in_array($_SESSION['tipo_usuario'], $roles_autorizados)) {
+    
+    // Consultamos la BD
+    $sql_check_pendientes = "SELECT COUNT(*) FROM public.registro_seguridad 
+                             WHERE date_trunc('month', fecha_hora) < date_trunc('month', CURRENT_DATE)";
+    try {
+        $stmt_check = $pdo->query($sql_check_pendientes);
+        $pendientes_cierre = ($stmt_check->fetchColumn() > 0);
+        
+        if ($pendientes_cierre) {
+            $meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+            $nombre_mes_pasado = $meses[(date('n') == 1 ? 12 : date('n') - 1) - 1];
+
+            echo "
+            <div id='alerta-temporal-reinicio' style='position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                        background: rgba(192, 57, 43, 0.95); color: white; padding: 30px 40px; border-radius: 15px; 
+                        box-shadow: 0 10px 40px rgba(0,0,0,0.6); z-index: 999999; text-align: center; border: 2px solid #fff; pointer-events: none;'>
+                <i class='fas fa-calendar-times' style='font-size: 4rem; margin-bottom: 15px;'></i><br>
+                <h2 style='margin:0 0 10px 0; font-family: sans-serif;'>CIERRE DE MES PENDIENTE</h2>
+                <p style='font-size: 1.2rem; font-family: sans-serif; margin:0;'>Tienes registros de {$nombre_mes_pasado} sin exportar.</p>
+            </div>
+            <script>
+                setTimeout(function() {
+                    var alertaTemp = document.getElementById('alerta-temporal-reinicio');
+                    if (alertaTemp) {
+                        alertaTemp.style.transition = 'opacity 0.8s ease';
+                        alertaTemp.style.opacity = '0'; 
+                        setTimeout(() => alertaTemp.remove(), 800); 
+                    }
+                }, 4000); 
+            </script>
+            ";
+        }
+    } catch (Exception $e) {
+        // Ignorar errores silenciosamente para no romper el mapa
+    }
+}
+// --- FIN: ALERTA FLOTANTE DINÁMICA DE CIERRE ---
+?>
 
     <div class="leaves-container">
         <div class="leaf" style="--i:1;"></div><div class="leaf" style="--i:2;"></div>

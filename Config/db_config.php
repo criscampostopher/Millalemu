@@ -28,15 +28,5 @@ try {
 
 
 // por probar
-try {
-    // ---------------------------------------------------------
-    // LIMPIEZA AUTOMÁTICA DE REGISTROS DE SEGURIDAD (Retención: 30 días)
-    // Borra las firmas legales que tengan más de 30 días de antigüedad
-    // ---------------------------------------------------------
-    $sql_limpieza_seguridad = "DELETE FROM public.registro_seguridad WHERE fecha_hora < NOW() - INTERVAL '30 days'";
-    $pdo->exec($sql_limpieza_seguridad);
-    
-} catch (Exception $e) {
-    // Si hay algún error, lo ignoramos para no interrumpir el sistema
-}
+
 ?>

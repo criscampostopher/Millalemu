@@ -32,6 +32,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $_SESSION['id_usuario'] = $usuario['id_usuario'];
             $_SESSION['nombre_usuario'] = $usuario['nombre_usuario'];
             $_SESSION['tipo_usuario'] = $usuario['tipo_usuario'];
+          
 
             // --- REDIRECCIÓN INTELIGENTE ---
             if (rolTieneFuncionesAdmin($usuario['tipo_usuario'])) {

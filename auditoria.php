@@ -6,28 +6,64 @@ session_start();
 require_once __DIR__ . '/Config/db_config.php';
 
 // Seguridad: Solo administradores pueden ver esto
-if (!isset($_SESSION['id_usuario']) || $_SESSION['tipo_usuario'] !== 'admin') { 
+$rol = strtolower(trim($_SESSION['tipo_usuario'] ?? ''));
+$roles_permitidos = ['admin', 'ingeniero_forestal', 'jefe_operaciones'];
+
+$es_admin = in_array($rol, $roles_permitidos, true);
+$id_usuario_actual = $_SESSION['id_usuario'] ?? 1;
+
+if (!$es_admin) {
+    echo json_encode(['success' => false, 'error' => 'Acceso denegado']);
+    exit;
+
     header("Location: login.php"); 
     exit; 
 }
 
-// --- MAGIA DEL BOTÓN EXCEL (Exportar a CSV) ---
+// --- MAGIA DEL BOTÓN EXCEL (Cierre de Mes Inteligente) ---
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
-    header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename=Reporte_Seguridad_' . date('Y-m-d') . '.csv');
     
-    $output = fopen('php://output', 'w');
-    // Cabeceras del Excel
-    fputcsv($output, ['ID', 'Trabajador', 'Rol', 'Mapa Asociado', 'Peligro Aceptado', 'Latitud', 'Longitud', 'Fecha y Hora']);
-    
-    // Traemos todos los registros
-    $stmt = $pdo->query("SELECT id_registro, nombre_usuario, rol_usuario, tipo_alerta, nombre_mapa, latitud, longitud, fecha_hora FROM public.registro_seguridad ORDER BY fecha_hora DESC");
-    
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        fputcsv($output, $row);
+    // 1. Buscamos SOLO los registros del mes pasado (o más antiguos).
+    // Como ahora guardamos el 'nombre_mapa' directo, ya no necesitamos el JOIN.
+    $sql_export = "SELECT * FROM public.registro_seguridad 
+                   WHERE date_trunc('month', fecha_hora) < date_trunc('month', CURRENT_DATE)
+                   ORDER BY fecha_hora ASC";
+                   
+    $stmt_exp = $pdo->query($sql_export);
+    $datos_export = $stmt_exp->fetchAll(PDO::FETCH_ASSOC);
+
+    if (count($datos_export) > 0) {
+        header('Content-Type: text/csv; charset=utf-8');
+        $mes_pasado = date('Y-m', strtotime('last month'));
+        header('Content-Disposition: attachment; filename=Reporte_Auditoria_' . $mes_pasado . '.csv');
+        
+        $output = fopen('php://output', 'w');
+        fputcsv($output, ['ID', 'Usuario', 'Rol', 'Alerta', 'Mapa', 'Latitud', 'Longitud', 'Fecha']);
+        
+        foreach ($datos_export as $row) {
+            $mapa_mostrar = !empty($row['nombre_mapa']) ? $row['nombre_mapa'] : 'General / Sistema';
+            
+            fputcsv($output, [
+                $row['id_registro'], // <--- CORREGIDO (Antes decía solo 'id')
+                $row['nombre_usuario'], 
+                $row['rol_usuario'], 
+                $row['tipo_alerta'], 
+                $mapa_mostrar, 
+                $row['latitud'], 
+                $row['longitud'], 
+                $row['fecha_hora']
+            ]);
+        }
+        fclose($output);
+
+        // 2. BORRAMOS SOLO LO DEL MES PASADO. 
+        $pdo->exec("DELETE FROM public.registro_seguridad 
+                    WHERE date_trunc('month', fecha_hora) < date_trunc('month', CURRENT_DATE)");
+        exit;
+    } else {
+        echo "<script>alert('El mes pasado ya fue cerrado o no hay registros antiguos para descargar.'); window.location.href='auditoria.php';</script>";
+        exit;
     }
-    fclose($output);
-    exit; 
 }
 
 // --- CARGA DE DATOS PARA LA PANTALLA ---
@@ -65,6 +101,35 @@ $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </head>
 <body>
 
+<?php
+// --- INICIO: RECORDATORIO DINÁMICO DE CIERRE DE MES ---
+$roles_autorizados = ['ingeniero_forestal', 'jefe_operaciones', 'admin'];
+
+// 1. Consultamos si EXISTEN registros del mes pasado o anteriores
+$sql_check_pendientes = "SELECT COUNT(*) FROM public.registro_seguridad 
+                         WHERE date_trunc('month', fecha_hora) < date_trunc('month', CURRENT_DATE)";
+$stmt_check = $pdo->query($sql_check_pendientes);
+$pendientes_cierre = ($stmt_check->fetchColumn() > 0);
+
+// 2. Si hay datos viejos pendientes y el rol es el correcto, mostramos la alerta
+if ($pendientes_cierre && isset($_SESSION['tipo_usuario']) && in_array($_SESSION['tipo_usuario'], $roles_autorizados)) {
+    
+    // Nombres de meses para hacerlo amigable
+    $meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+    $nombre_mes_pasado = $meses[(date('n') == 1 ? 12 : date('n') - 1) - 1];
+
+    echo "
+    <div style='background-color: #c0392b; color: white; padding: 12px 18px; 
+                border-radius: 8px; font-weight: normal; margin: 15px; display: inline-block; 
+                box-shadow: 0 4px 6px rgba(0,0,0,0.2); font-size: 0.95rem;'>
+        <i class='fas fa-exclamation-triangle' style='font-weight: bold; margin-right: 5px;'></i> 
+        ¡ATENCIÓN! Tienes registros pendientes de <b>{$nombre_mes_pasado}</b> (o anteriores). Descarga el Excel para cerrar el mes y limpiar el sistema.
+    </div>
+    <div style='clear:both;'></div>"; 
+}
+// --- FIN: RECORDATORIO DINÁMICO DE CIERRE DE MES ---
+?>
+
 <div class="container">
     <div class="header-panel">
         <div>
@@ -73,8 +138,23 @@ $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
         <div>
             <a href="menuadmin.php" class="btn-back"><i class="fas fa-arrow-left"></i> Volver al Mapa</a>
-            <a href="auditoria.php?export=csv" class="btn-export"><i class="fas fa-file-excel"></i> Descargar Excel</a>
+            <a href="#" onclick="descargarYRecargar(); return false;" class="btn-export">
+                <i class="fas fa-file-excel"></i> Descargar Excel
+            </a>
         </div>
+
+        <script>
+        function descargarYRecargar() {
+            // 1. Dispara la descarga del Excel
+            window.location.href = 'auditoria.php?export=csv';
+            
+            // 2. Espera 1.5 segundos (para darle tiempo a la base de datos de borrar todo) 
+            // y luego recarga la página a la fuerza para limpiar la tabla visualmente.
+            setTimeout(function() {
+                window.location.href = 'auditoria.php';
+            }, 1500);
+        }
+        </script>
     </div>
 
     <div class="table-container">

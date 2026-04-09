@@ -335,6 +335,8 @@ unset($mapa); // Limpieza
     </style>
 </head>
 <body>
+    
+    
 
     <div id="loader"><i class="fas fa-circle-notch fa-spin"></i> Cargando...</div>
     <div id="map"></div>
@@ -451,27 +453,39 @@ unset($mapa); // Limpieza
     </div>
 
     <div id="alertas"></div>
+    
+    
 
-    <div id="markerFormContainer">
+   <div id="markerFormContainer">
         <form id="markerForm">
             <h3 style="text-align:center; margin-top:0;">Nueva Alerta</h3>
-            <label>Asignar a Mapa:</label> <select id="selectorMapaForm"></select>
+            <label>Asignar a Mapa:</label> 
+            <select id="selectorMapaForm" style="width:100%; padding:5px; margin-bottom:5px;"></select>
+            
             <label>Título:</label> 
-<input type="text" id="popupNombre" list="listaCondiciones" onchange="autoCompletarAdmin()" autocomplete="off" placeholder="Escribe o elige del catálogo..." required>
-            <label>Descripción:</label> <input type="text" id="popupDesc">
+            <input type="text" id="popupNombre" list="listaCondiciones" onchange="autoCompletarAdmin()" autocomplete="off" placeholder="Toca para buscar o elegir..." style="width: 100%; padding: 8px; margin-bottom:5px;" required>
+            
+            <label>Descripción:</label> 
+            <textarea id="popupDesc" readonly placeholder="La medida de gestión aparecerá aquí..." style="width: 100%; height: 80px; background-color: #f4f4f4; color: #333; margin-bottom:5px;" required></textarea>
+            
             <label>Nivel:</label> 
-            <select id="popupIcon">
+            <select id="popupIcon" style="width: 100%; padding: 8px; margin-bottom:5px;">
                 <option value="Critico">🔴 Crítico</option>
                 <option value="Alto">🟠 Alto</option>
                 <option value="Medio">🟢 Medio</option>
             </select>
-            <label>Radio (m):</label> <input type="number" id="popupRadio" placeholder="0" min="0">
+            
+            <label>Radio (m):</label> 
+            <input type="number" id="popupRadio" placeholder="0" min="0" style="width: 100%; padding: 8px;">
+            
             <div style="display:flex; gap:10px; margin-top:15px;">
                 <button type="submit" class="btn-action btn-upload" style="margin:0;">Guardar</button>
                 <button type="button" id="cancelMarker" class="btn-action" style="margin:0; background:#95a5a6;">Cancelar</button>
             </div>
         </form>
     </div>
+    
+    
 
     <div id="modalReporteTrabajador" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:white; padding:20px; border-radius:10px; z-index:99999; box-shadow:0 0 20px rgba(0,0,0,0.5); width: 320px; max-width: 90%;">
         <form id="formReporteTrabajador">
@@ -752,7 +766,7 @@ if (formReporte) {
             }
         }
 
-        function enviarAlServidor(payload, esSincronizacion) {
+function enviarAlServidor(payload, esSincronizacion) {
             const btn = document.getElementById('repTrabSubmit');
             fetch('Api/api_mapa.php', {
                 method: 'POST',
@@ -764,7 +778,11 @@ if (formReporte) {
                 if(res.success && !esSincronizacion) {
                     alert("📍 ¡Peligro reportado exitosamente!");
                     if(typeof cerrarModalReporteTrabajador === 'function') cerrarModalReporteTrabajador();
-                    location.reload(); 
+                    
+                    // Actualización suave en lugar de recargar toda la página
+                    if (typeof cargarDatosDeAlertas === 'function') {
+                        cargarDatosDeAlertas(); 
+                    }
                 }
             })
             .catch(err => {
@@ -778,11 +796,16 @@ if (formReporte) {
             });
         }
 
+      let syncEnProgreso = false; // Candado de seguridad anti-avalanchas
+
         function sincronizarPendientes() {
-            if (!navigator.onLine) return;
+            // Si no hay internet o ya hay una sincronización corriendo, ignoramos
+            if (!navigator.onLine || syncEnProgreso) return; 
             
             let pendientes = JSON.parse(localStorage.getItem('alertasOffline')) || [];
             if (pendientes.length === 0) return;
+            
+            syncEnProgreso = true; // Cerramos el candado
             actualizarUIOffline();
 
             let alertasRestantes = []; 
@@ -815,12 +838,26 @@ if (formReporte) {
                 actualizarUIOffline();
 
                 if (alertasExitosas > 0) {
-                    alert(`✅ ¡Se subieron ${alertasExitosas} alertas exitosamente al servidor!`);
-                    location.reload(); 
-                } else if (alertasRestantes.length > 0) {
-                    alert("⚠️ No se pudieron subir las alertas. Es probable que tu sesión haya caducado. La página se recargará para reconectar.");
-                    location.reload(); 
+                    console.log(`✅ Se subieron ${alertasExitosas} alertas silenciosamente.`);
+                    
+                    // --- MAGIA ANTI-CRASH: Borrar los fantasmas grises del mapa ---
+                    map.eachLayer(function(layer) {
+                        if (layer.options && layer.options.icon && layer.options.icon.options.className === 'custom-offline-icon') {
+                            map.removeLayer(layer);
+                        }
+                        if (layer.options && layer.options.dashArray === '5, 5' && layer.options.color === '#e74c3c') {
+                            map.removeLayer(layer);
+                        }
+                    });
+                    // --------------------------------------------------------------
+
+                    // Llama a la función del visor para redibujar las alertas a color
+                    if (typeof cargarDatosDeAlertas === 'function') {
+                        cargarDatosDeAlertas(); 
+                    }
                 }
+                
+                syncEnProgreso = false; // Abrimos el candado para futuras conexiones
             });
         }
 
@@ -1027,15 +1064,14 @@ if (formReporte) {
     
     
     // 3. Función de autocompletado LIBRE para el Administrador
+   // 3. Función de autocompletado ESTRICTO para el Administrador
     function autoCompletarAdmin() {
         const inputNombre = document.getElementById('popupNombre').value;
         const condicion = catalogoAlertas.find(c => c.nombre === inputNombre);
         
         if (condicion) {
-            // Si elige algo del catálogo, le ahorramos trabajo y autocompletamos
             document.getElementById('popupDesc').value = condicion.descripcion;
             
-            // Mapeamos el nivel del catálogo al formato del select del Admin
             let nivelDB = condicion.nivel.toLowerCase();
             if(nivelDB.includes('critic')) {
                 document.getElementById('popupIcon').value = "Critico";
@@ -1044,11 +1080,29 @@ if (formReporte) {
             } else {
                 document.getElementById('popupIcon').value = "Medio";
             }
+        } else {
+            // IGUAL QUE EL TRABAJADOR: Si escribe algo fuera del catálogo, limpiamos la descripción
+            document.getElementById('popupDesc').value = "";
         }
-        // NOTA CLAVE: Aquí NO hay un "else" que borre la descripción, 
-        // ni tampoco bloqueamos el campo (readonly). 
-        // Si el admin escribe un peligro inventado, simplemente no entra al 'if' y escribe libremente.
     }
+    
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        const adminForm = document.getElementById('markerForm');
+        if (adminForm) {
+            // Usamos 'true' (fase de captura) para interceptar el Submit antes que script_visor.js
+            adminForm.addEventListener('submit', function(e) {
+                const descInput = document.getElementById('popupDesc').value.trim();
+                const nombreInput = document.getElementById('popupNombre').value.trim();
+                
+                if (descInput === "" || nombreInput === "") {
+                    e.preventDefault(); 
+                    e.stopImmediatePropagation(); // Evita que script_visor.js lo guarde
+                    alert("⚠️ ERROR: Debes seleccionar un peligro válido del catálogo. No se permite el ingreso de datos manuales.");
+                }
+            }, true); 
+        }
+    });
 </script>
     
     <script src="script_visor.js?v=4.6"></script>
